@@ -20,10 +20,11 @@ A powerful web application that translates Korean YouTube video subtitles into m
 
 ## 🎥 Demo
 
-[Watch the Demo Video](https://www.youtube.com/watch?v=YOUR_DEMO_VIDEO_ID)
+[Watch the Demo Video](https://www.youtube.com/watch?v=XVEquB0Cydo)
+
 
 ### Screenshots
-![App Screenshot](assets/youtube-translator-cover.png)
+![youtube-translator](https://github.com/user-attachments/assets/bb58b9a1-57dd-41f6-9fe0-a6b563edef9b)
 
 ## 🛠️ Tech Stack
 
