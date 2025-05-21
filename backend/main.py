@@ -48,7 +48,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",  # Local development
-        "https://your-frontend-domain.vercel.app"  # Your Vercel frontend
+        "https://youtube-translator-app-s9q9.vercel.app"  # Vercel frontend
     ],
     allow_credentials=True,
     allow_methods=["*"],
