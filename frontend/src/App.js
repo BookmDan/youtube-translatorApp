@@ -44,12 +44,14 @@ function App() {
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const [targetLang, setTargetLang] = useState('eng_Latn');
+  const [transcript, setTranscript] = useState(null);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
     setResult(null);
+    setTranscript(null);
 
     if (!url) {
       setError('Please enter a YouTube URL.');
@@ -70,6 +72,33 @@ function App() {
         err.response?.data?.detail ||
         'Translation service URL not configured. Please set the TRANSLATION_LAMBDA_URL environment variable.'
       );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGetTranscript = async () => {
+    setError("");
+    setTranscript("");
+    if (!url) {
+      setError("Please enter a YouTube URL.");
+      return;
+    }
+    setLoading(true);
+    try {
+      const response = await fetch("http://localhost:8000/read-transcript", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      const data = await response.json();
+      if (response.ok && data.status === "success") {
+        setTranscript(data.transcript);
+      } else {
+        setError(data.detail || data.message || "Failed to load transcript.");
+      }
+    } catch (err) {
+      setError("Failed to load transcript.");
     } finally {
       setLoading(false);
     }
@@ -143,26 +172,36 @@ function App() {
                 ),
               }}
             />
-            <Button
-              variant="contained"
-              color="primary"
-              type="submit"
-              fullWidth
-              size="large"
-              sx={{
-                bgcolor: '#6c47ff',
-                color: '#fff',
-                fontWeight: 700,
-                py: 1.5,
-                borderRadius: 2,
-                boxShadow: 2,
-                '&:hover': { bgcolor: '#5936d9' }
-              }}
-              startIcon={<TranslateIcon />}
-              disabled={loading}
-            >
-              {loading ? 'Translating...' : 'Translate Video'}
-            </Button>
+            <Box sx={{ mt: 2, display: 'flex', gap: 2 }}>
+              <Button
+                variant="contained"
+                color="primary"
+                type="submit"
+                fullWidth
+                size="large"
+                sx={{
+                  bgcolor: '#6c47ff',
+                  color: '#fff',
+                  fontWeight: 700,
+                  py: 1.5,
+                  borderRadius: 2,
+                  boxShadow: 2,
+                  '&:hover': { bgcolor: '#5936d9' }
+                }}
+                startIcon={<TranslateIcon />}
+                disabled={loading}
+              >
+                {loading ? 'Translating...' : 'Translate Video'}
+              </Button>
+              <Button
+                variant="outlined"
+                onClick={handleGetTranscript}
+                disabled={loading}
+                fullWidth
+              >
+                {loading ? 'Loading...' : 'Get Transcript'}
+              </Button>
+            </Box>
           </form>
           {error && (
             <Alert severity="error" sx={{ mt: 3 }}>
@@ -206,6 +245,13 @@ function App() {
                 </Paper>
               )}
             </Box>
+          )}
+          {/* Transcript Section */}
+          {transcript && (
+            <div style={{ marginTop: 24, padding: 16, background: "#f7f7f7", borderRadius: 8 }}>
+              <h3>Transcript</h3>
+              <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{transcript}</pre>
+            </div>
           )}
         </Paper>
       </Container>
