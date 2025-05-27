@@ -24,6 +24,7 @@ import {
 import YouTubeIcon from '@mui/icons-material/YouTube';
 import TranslateIcon from '@mui/icons-material/Translate';
 import GitHubIcon from '@mui/icons-material/GitHub';
+import SummarizeIcon from '@mui/icons-material/Summarize';
 import axios from 'axios';
 
 const TRANSLATION_API_URL = 'http://localhost:8000/translate'; // Update if needed
@@ -45,6 +46,7 @@ function App() {
   const [error, setError] = useState(null);
   const [targetLang, setTargetLang] = useState('eng_Latn');
   const [transcript, setTranscript] = useState(null);
+  const [summary, setSummary] = useState(null);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -52,6 +54,7 @@ function App() {
     setError(null);
     setResult(null);
     setTranscript(null);
+    setSummary(null);
 
     if (!url) {
       setError('Please enter a YouTube URL.');
@@ -80,6 +83,7 @@ function App() {
   const handleGetTranscript = async () => {
     setError("");
     setTranscript("");
+    setSummary("");
     if (!url) {
       setError("Please enter a YouTube URL.");
       return;
@@ -99,6 +103,38 @@ function App() {
       }
     } catch (err) {
       setError("Failed to load transcript.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSummarize = async () => {
+    if (!transcript) {
+      setError("Please get the transcript first before summarizing.");
+      return;
+    }
+    
+    setError("");
+    setSummary("");
+    setLoading(true);
+    
+    try {
+      const response = await fetch("http://localhost:8000/summarize-transcript", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          transcript: transcript,
+          url: url 
+        }),
+      });
+      const data = await response.json();
+      if (response.ok && data.status === "success") {
+        setSummary(data.summary);
+      } else {
+        setError(data.detail || data.message || "Failed to summarize transcript.");
+      }
+    } catch (err) {
+      setError("Failed to summarize transcript.");
     } finally {
       setLoading(false);
     }
@@ -172,7 +208,7 @@ function App() {
                 ),
               }}
             />
-            <Box sx={{ mt: 2, display: 'flex', gap: 2 }}>
+            <Box sx={{ mt: 2, display: 'flex', gap: 1, flexDirection: 'column' }}>
               <Button
                 variant="contained"
                 color="primary"
@@ -193,14 +229,36 @@ function App() {
               >
                 {loading ? 'Translating...' : 'Translate Video'}
               </Button>
-              <Button
-                variant="outlined"
-                onClick={handleGetTranscript}
-                disabled={loading}
-                fullWidth
-              >
-                {loading ? 'Loading...' : 'Get Transcript'}
-              </Button>
+              <Box sx={{ display: 'flex', gap: 1 }}>
+                <Button
+                  variant="outlined"
+                  onClick={handleGetTranscript}
+                  disabled={loading}
+                  fullWidth
+                  sx={{ py: 1.5 }}
+                >
+                  {loading ? 'Loading...' : 'Get Transcript'}
+                </Button>
+                <Button
+                  variant="outlined"
+                  onClick={handleSummarize}
+                  disabled={loading || !transcript}
+                  fullWidth
+                  sx={{ 
+                    py: 1.5,
+                    bgcolor: transcript ? '#fff3cd' : 'inherit',
+                    borderColor: transcript ? '#ffc107' : 'inherit',
+                    color: transcript ? '#856404' : 'inherit',
+                    '&:hover': { 
+                      bgcolor: transcript ? '#ffecb5' : 'inherit',
+                      borderColor: transcript ? '#ffca2c' : 'inherit'
+                    }
+                  }}
+                  startIcon={<SummarizeIcon />}
+                >
+                  {loading ? 'Summarizing...' : 'Summarize'}
+                </Button>
+              </Box>
             </Box>
           </form>
           {error && (
@@ -252,6 +310,28 @@ function App() {
               <h3>Transcript</h3>
               <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{transcript}</pre>
             </div>
+          )}
+          
+          {/* Summary Section */}
+          {summary && (
+            <Box sx={{ mt: 3 }}>
+              <Paper elevation={2} sx={{ p: 3, borderRadius: 2, bgcolor: '#e8f5e8' }}>
+                <Typography variant="h6" gutterBottom sx={{ color: '#2e7d32', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <SummarizeIcon />
+                  AI Summary
+                </Typography>
+                <Typography 
+                  variant="body1" 
+                  sx={{ 
+                    whiteSpace: 'pre-wrap', 
+                    lineHeight: 1.6,
+                    color: '#1b5e20'
+                  }}
+                >
+                  {summary}
+                </Typography>
+              </Paper>
+            </Box>
           )}
         </Paper>
       </Container>

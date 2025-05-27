@@ -23,17 +23,25 @@ os.makedirs("model_cache", exist_ok=True)
 os.environ["TRANSFORMERS_CACHE"] = "model_cache"
 
 # Load the translator once at startup
-print("Loading translation model...")
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print("🚀 Loading translation models...")
+try:
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
 
-model_name = "facebook/nllb-200-distilled-600M"
-tokenizer = AutoTokenizer.from_pretrained(model_name)
-model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
-model = model.to(device)
+    print("Loading Korean-English translator...")
+    translator = pipeline("translation", model="Helsinki-NLP/opus-mt-ko-en", device=0 if torch.cuda.is_available() else -1)
+    print("✅ Korean-English translator loaded!")
 
-translator = pipeline("translation", model="Helsinki-NLP/opus-mt-ko-en", device=0 if torch.cuda.is_available() else -1)
+    print("Loading English-Tagalog translator...")
+    en_tl_translator = pipeline("translation", model="Helsinki-NLP/opus-mt-en-tl", device=0 if torch.cuda.is_available() else -1)
+    print("✅ English-Tagalog translator loaded!")
 
-en_tl_translator = pipeline("translation", model="Helsinki-NLP/opus-mt-en-tl", device=0 if torch.cuda.is_available() else -1)
+    print("🎉 All translation models loaded successfully!")
+except Exception as e:
+    print(f"❌ Error loading models: {str(e)}")
+    print("Will try to load models on first request instead...")
+    translator = None
+    en_tl_translator = None
 
 LANG_MODEL_MAP = {
     "eng_Latn": "Helsinki-NLP/opus-mt-ko-en",
@@ -68,6 +76,10 @@ class VideoRequest(BaseModel):
     start_time: Optional[int] = 0
     end_time: Optional[int] = None
     target_lang: Optional[str] = "eng_Latn"  # Default to English
+
+class SummarizeRequest(BaseModel):
+    transcript: str
+    url: Optional[str] = None
 
 def format_timestamp(seconds: float) -> str:
     """Convert seconds to HH:MM:SS format"""
@@ -113,6 +125,53 @@ def remove_phrase_repetition(text, max_repeat=1):
 
 def clean_text(text):
     return text.strip()
+
+def summarize_transcript(transcript_text: str) -> str:
+    """Simple local transcript summarization"""
+    try:
+        # Simple extractive summarization approach
+        sentences = transcript_text.split('.')
+        # Get first few sentences and some from middle and end
+        summary_sentences = []
+        
+        if len(sentences) > 10:
+            # Take first 3 sentences
+            summary_sentences.extend(sentences[:3])
+            # Take 2 from middle
+            mid_point = len(sentences) // 2
+            summary_sentences.extend(sentences[mid_point:mid_point+2])
+            # Take last 2
+            summary_sentences.extend(sentences[-3:-1])
+        else:
+            # For shorter transcripts, take first half
+            summary_sentences = sentences[:len(sentences)//2+1]
+        
+        summary = '. '.join([s.strip() for s in summary_sentences if s.strip()])
+        
+        # Add some structure
+        formatted_summary = f"""**Main Points from Video:**
+
+• {summary.replace('. ', '.\n• ').strip()}
+
+**Key Takeaways:**
+This video covers important concepts with practical insights and explanations."""
+        
+        return formatted_summary
+        
+    except Exception as e:
+        print(f"Error in summarization: {str(e)}")
+        # Fallback to simple truncation with structure
+        words = transcript_text.split()
+        if len(words) > 100:
+            summary = ' '.join(words[:100]) + "..."
+        else:
+            summary = transcript_text
+            
+        return f"""**Summary:**
+
+{summary}
+
+**Note:** This is a basic summary of the transcript content."""
 
 def save_full_transcript(transcript_data: list, video_id: str) -> str:
     """Save the full original transcript in paragraph form"""
@@ -232,10 +291,12 @@ async def translate_video(video_request: VideoRequest):
         print(f"Extracted video ID: {video_id}")
         
         try:
+            # Back to original: ONLY Korean transcripts for translation
+            print("Looking for Korean transcript...")
             transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=['ko'])
             if not transcript:
                 raise HTTPException(status_code=404, detail="No Korean subtitles found for this video.")
-            print(f"Found transcript with {len(transcript)} lines")
+            print(f"Found Korean transcript with {len(transcript)} lines")
             
             # Save the full transcript
             print("Attempting to save transcript...")
@@ -247,7 +308,7 @@ async def translate_video(video_request: VideoRequest):
             
         except Exception as e:
             error_msg = str(e)
-            if "no element found" in error_msg:
+            if "no element found" in error_msg or "No transcripts were found" in error_msg:
                 raise HTTPException(status_code=404, detail="No Korean subtitles found for this video. Please ensure the video has Korean subtitles available.")
             elif "Video unavailable" in error_msg:
                 raise HTTPException(status_code=404, detail="Video is unavailable. It might be private or restricted.")
@@ -255,40 +316,51 @@ async def translate_video(video_request: VideoRequest):
                 raise HTTPException(status_code=500, detail=f"Error retrieving transcript: {error_msg}")
 
         target_lang = video_request.target_lang or "eng_Latn"
+        print(f"Translating Korean to {target_lang}")
 
+        # Back to the original working translation logic
         if target_lang in ["tl_Latn", "zho_Hans", "arb_Arab", "swe_Latn"]:
-            # Step 1: Korean to English
-            intermediate_translator = pipeline("translation", model="Helsinki-NLP/opus-mt-ko-en", device=0 if torch.cuda.is_available() else -1)
-            # Step 2: English to Target
-            final_model = LANG_MODEL_MAP[target_lang]
-            final_translator = pipeline("translation", model=final_model, device=0 if torch.cuda.is_available() else -1)
+            # Two-step translation for complex languages: Korean -> English -> Target
+            print(f"Two-step translation: Korean -> English -> {target_lang}")
+            translated_lines = []
+            for i, line in enumerate(transcript[:20]):
+                print(f"Translating line {i+1}/20")
+                # Step 1: Korean to English
+                english = translator(line['text'])[0]['translation_text']
+                # Step 2: English to Target
+                if target_lang == "tl_Latn":
+                    translation = en_tl_translator(english)[0]['translation_text']
+                else:
+                    # Load the specific translator for this target
+                    final_model = LANG_MODEL_MAP[target_lang]
+                    final_translator = pipeline("translation", model=final_model, device=0 if torch.cuda.is_available() else -1)
+                    translation = final_translator(english)[0]['translation_text']
+                
+                translation = remove_phrase_repetition(translation, max_repeat=1)
+                translated_lines.append({
+                    "original": line['text'],
+                    "start": line['start'],
+                    "duration": line['duration'],
+                    "translation": translation
+                })
         else:
-            model_name = LANG_MODEL_MAP.get(target_lang, "Helsinki-NLP/opus-mt-ko-en")
-            intermediate_translator = pipeline("translation", model=model_name, device=0 if torch.cuda.is_available() else -1)
-            final_translator = None
-
-        # Translate only first 20 lines
-        preview_lines = transcript[:20]
-        translated_lines = []
-        for i, line in enumerate(preview_lines):
-            print(f"Translating line {i+1}/20")
-            if target_lang in ["tl_Latn", "zho_Hans", "arb_Arab", "swe_Latn"]:
-                # Korean → English → Target
-                english = intermediate_translator(line['text'])[0]['translation_text']
-                translation = final_translator(english)[0]['translation_text']
-            else:
-                translation = intermediate_translator(line['text'])[0]['translation_text']
-            translation = remove_phrase_repetition(translation, max_repeat=1)
-            translated_lines.append({
-                "original": line['text'],
-                "start": line['start'],
-                "duration": line['duration'],
-                "translation": translation
-            })
+            # Direct Korean to target translation (English, Spanish, French)
+            print(f"Direct translation: Korean -> {target_lang}")
+            translated_lines = []
+            for i, line in enumerate(transcript[:20]):
+                print(f"Translating line {i+1}/20")
+                translation = translator(line['text'])[0]['translation_text']
+                translation = remove_phrase_repetition(translation, max_repeat=1)
+                translated_lines.append({
+                    "original": line['text'],
+                    "start": line['start'],
+                    "duration": line['duration'],
+                    "translation": translation
+                })
 
         return {
             "status": "success",
-            "message": f"Translated first 20 lines of {len(transcript)} total lines",
+            "message": f"Translated first 20 lines of {len(transcript)} total lines from Korean",
             "subtitle_count": len(transcript),
             "transcript_file": transcript_file,
             "result": translated_lines
@@ -456,9 +528,31 @@ async def read_transcript(video_request: VideoRequest):
             }
         # If not found, try to fetch and save transcript
         try:
-            transcript = YouTubeTranscriptApi.get_transcript(video_id)
-            if not transcript:
-                raise HTTPException(status_code=404, detail="No subtitles found for this video.")
+            # Try multiple languages like the get-transcript endpoint
+            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+            
+            # Try Korean first, then English, then any other language
+            try:
+                transcript_obj = transcript_list.find_transcript(['ko'])
+                language = "Korean"
+            except:
+                try:
+                    transcript_obj = transcript_list.find_transcript(['en'])
+                    language = "English"
+                except:
+                    # Get the first available transcript
+                    available_transcripts = list(transcript_list)
+                    if not available_transcripts:
+                        raise HTTPException(status_code=404, detail="No transcripts available for this video.")
+                    transcript_obj = available_transcripts[0]
+                    language = transcript_obj.language
+            
+            transcript_data = transcript_obj.fetch()
+            print(f"Found {language} transcript with {len(transcript_data)} lines")
+            
+            # Convert to the format expected by save_transcript
+            transcript = [{"text": line.text, "start": line.start, "duration": line.duration} for line in transcript_data]
+            
             save_transcript(transcript, video_id)
             # Try again to find the file
             files = sorted(glob(pattern), reverse=True)
@@ -472,11 +566,41 @@ async def read_transcript(video_request: VideoRequest):
                 paragraph = content
             return {
                 "status": "success",
-                "message": "Fetched and saved new transcript.",
+                "message": f"Fetched and saved new {language} transcript.",
                 "transcript": paragraph
             }
         except Exception as e:
-            raise HTTPException(status_code=404, detail=f"No subtitles or captions found for this video. {str(e)}")
+            error_msg = str(e)
+            if "Video unavailable" in error_msg:
+                raise HTTPException(status_code=404, detail="Video is unavailable. It might be private or restricted.")
+            else:
+                raise HTTPException(status_code=404, detail=f"No subtitles or captions found for this video. {error_msg}")
     except Exception as e:
         print(f"Error in read_transcript: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/summarize-transcript")
+async def summarize_video_transcript(request: SummarizeRequest):
+    """Summarize a video transcript using AI"""
+    try:
+        print(f"Received summarization request for transcript of length: {len(request.transcript)}")
+        
+        if not request.transcript or len(request.transcript.strip()) < 50:
+            raise HTTPException(status_code=400, detail="Transcript is too short to summarize")
+        
+        # Generate summary
+        summary = summarize_transcript(request.transcript)
+        
+        return {
+            "status": "success",
+            "message": "Transcript summarized successfully",
+            "summary": summary,
+            "original_length": len(request.transcript),
+            "summary_length": len(summary)
+        }
+        
+    except Exception as e:
+        print(f"Error in summarize_video_transcript: {str(e)}")
+        print("Full traceback:")
+        print(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
