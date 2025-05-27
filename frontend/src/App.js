@@ -82,7 +82,6 @@ function App() {
 
   const handleGetTranscript = async () => {
     setError("");
-    setTranscript("");
     setSummary("");
     if (!url) {
       setError("Please enter a YouTube URL.");
@@ -286,7 +285,7 @@ function App() {
                             primary={
                               <>
                                 <Box mb={0.5}>
-                                  <strong>Korean:</strong> <span>{line.original}</span>
+                                  <strong>{result.source_language || 'Original'}:</strong> <span>{line.original}</span>
                                 </Box>
                                 <Box>
                                   <strong>{selectedLangLabel}:</strong> <span>{line.translation}</span>
