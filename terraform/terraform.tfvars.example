@@ -1,0 +1,4 @@
+project_id           = "your-project-id"
+region              = "us-central1"
+frontend_domain     = ""  # Optional: Set if you want to use a custom domain
+huggingface_api_key = "your-huggingface-api-key" 

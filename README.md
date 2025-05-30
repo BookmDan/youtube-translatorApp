@@ -105,3 +105,129 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - [FastAPI](https://fastapi.tiangolo.com/) for the backend framework
 - [Material-UI](https://mui.com/) for the frontend components
 
+## Local Development Setup
+
+### Backend Setup
+```bash
+# Create and activate virtual environment
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install dependencies
+cd backend
+pip install -r requirements.txt
+
+# Start backend server
+uvicorn main:app --reload
+```
+
+### Frontend Setup
+```bash
+# Install dependencies
+cd frontend
+npm install
+
+# Start frontend development server
+npm start
+```
+
+## Docker Development
+
+### Backend
+```bash
+# Build backend container
+cd backend
+docker build -t youtube-translator-backend .
+
+# Run backend container
+docker run -p 8000:8000 youtube-translator-backend
+```
+
+## GCP Deployment Setup
+
+### Prerequisites
+1. Install Google Cloud SDK
+2. Install Terraform
+3. Enable required GCP APIs:
+```bash
+gcloud services enable \
+  cloudbuild.googleapis.com \
+  run.googleapis.com \
+  containerregistry.googleapis.com \
+  storage.googleapis.com
+```
+
+### Initial Setup
+1. Create a new GCP project or select an existing one:
+```bash
+gcloud projects create [PROJECT_ID]
+gcloud config set project [PROJECT_ID]
+```
+
+2. Configure GCP authentication:
+```bash
+gcloud auth login
+gcloud auth application-default login
+```
+
+### Infrastructure Deployment (Terraform)
+```bash
+# Initialize Terraform
+terraform init
+
+# Plan changes
+terraform plan
+
+# Apply infrastructure
+terraform apply
+```
+
+### Manual Deployment
+```bash
+# Build and push backend
+docker build -t gcr.io/[PROJECT_ID]/youtube-translator-backend ./backend
+docker push gcr.io/[PROJECT_ID]/youtube-translator-backend
+
+# Deploy to Cloud Run
+gcloud run deploy youtube-translator \
+  --image gcr.io/[PROJECT_ID]/youtube-translator-backend \
+  --platform managed \
+  --region us-central1 \
+  --allow-unauthenticated
+
+# Deploy frontend to Storage
+cd frontend
+npm run build
+gsutil -m cp -r build/* gs://[YOUR_BUCKET_NAME]/
+```
+
+### Automated Deployment (Cloud Build)
+The repository includes Cloud Build configuration that automatically:
+1. Builds the backend container
+2. Deploys to Cloud Run
+3. Builds the frontend
+4. Deploys to Cloud Storage
+
+Just push to the main branch:
+```bash
+git push origin main
+```
+
+## Environment Variables
+
+### Backend (.env)
+```
+HUGGINGFACE_API_KEY=your_api_key_here
+```
+
+### Frontend (.env)
+```
+REACT_APP_API_URL=your_backend_url
+```
+
+## Architecture
+- Frontend: React.js hosted on Google Cloud Storage
+- Backend: FastAPI on Cloud Run
+- CI/CD: Cloud Build
+- Infrastructure: Terraform
+

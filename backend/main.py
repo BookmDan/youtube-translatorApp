@@ -224,16 +224,16 @@ def summarize_transcript(transcript_text: str) -> str:
             summary_sentences = sentences[:len(sentences)//2+1]
         
         summary = '. '.join([s.strip() for s in summary_sentences if s.strip()])
+        bullet_points = summary.replace('. ', '.\n• ').strip()
         
-        # Add some structure
-        formatted_summary = f"""**Main Points from Video:**
-
-• {summary.replace('. ', '.\n• ').strip()}
-
-**Key Takeaways:**
-This video covers important concepts with practical insights and explanations."""
+        formatted_summary = [
+            "**Main Points from Video:**\n",
+            f"• {bullet_points}\n",
+            "**Key Takeaways:**\n",
+            "This video covers important concepts with practical insights and explanations."
+        ]
         
-        return formatted_summary
+        return '\n'.join(formatted_summary)
         
     except Exception as e:
         print(f"Error in summarization: {str(e)}")
@@ -243,12 +243,12 @@ This video covers important concepts with practical insights and explanations.""
             summary = ' '.join(words[:100]) + "..."
         else:
             summary = transcript_text
-            
-        return f"""**Summary:**
-
-{summary}
-
-**Note:** This is a basic summary of the transcript content."""
+        
+        return '\n'.join([
+            "**Summary:**\n",
+            summary,
+            "\n**Note:** This is a basic summary of the transcript content."
+        ])
 
 def save_full_transcript(transcript_data: list, video_id: str) -> str:
     """Save the full original transcript in paragraph form"""
