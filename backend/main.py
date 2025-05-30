@@ -24,29 +24,71 @@ HF_ENABLED = HF_API_KEY is not None
 
 print(f"🔧 Hugging Face API: {'Enabled' if HF_ENABLED else 'Disabled (no API key)'}")
 
-# Create cache directory if it doesn't exist
+# Update CORS settings
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",  # Local development
+        "http://localhost:5173",  # Vite default port
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:5173",
+        "*"  # Allow all origins for now (you can restrict this in production)
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Get port from environment variable
+port = int(os.environ.get("PORT", 8000))
+
 os.makedirs("model_cache", exist_ok=True)
+os.makedirs("output", exist_ok=True)
+os.makedirs("transcripts", exist_ok=True)
+os.makedirs("translations", exist_ok=True)
 
 # Set environment variable for HuggingFace cache
 os.environ["TRANSFORMERS_CACHE"] = "model_cache"
 
-# Load the translator once at startup
+# Load the translator with better error handling
 print("🚀 Loading translation models...")
 try:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    print("Loading Korean-English translator...")
-    translator = pipeline("translation", model="Helsinki-NLP/opus-mt-ko-en", device=0 if torch.cuda.is_available() else -1)
-    print("✅ Korean-English translator loaded!")
+    # Load Korean-English translator with retry mechanism
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            print(f"Loading Korean-English translator (attempt {attempt + 1}/{max_retries})...")
+            translator = pipeline("translation", model="Helsinki-NLP/opus-mt-ko-en", device=0 if torch.cuda.is_available() else -1)
+            print("✅ Korean-English translator loaded!")
+            break
+        except Exception as e:
+            print(f"❌ Attempt {attempt + 1} failed: {str(e)}")
+            if attempt == max_retries - 1:
+                print("❌ Failed to load Korean-English translator after all attempts")
+                translator = None
 
-    print("Loading English-Tagalog translator...")
-    en_tl_translator = pipeline("translation", model="Helsinki-NLP/opus-mt-en-tl", device=0 if torch.cuda.is_available() else -1)
-    print("✅ English-Tagalog translator loaded!")
+    # Load English-Tagalog translator with retry mechanism
+    for attempt in range(max_retries):
+        try:
+            print(f"Loading English-Tagalog translator (attempt {attempt + 1}/{max_retries})...")
+            en_tl_translator = pipeline("translation", model="Helsinki-NLP/opus-mt-en-tl", device=0 if torch.cuda.is_available() else -1)
+            print("✅ English-Tagalog translator loaded!")
+            break
+        except Exception as e:
+            print(f"❌ Attempt {attempt + 1} failed: {str(e)}")
+            if attempt == max_retries - 1:
+                print("❌ Failed to load English-Tagalog translator after all attempts")
+                en_tl_translator = None
 
-    print("🎉 All translation models loaded successfully!")
+    if translator is None and en_tl_translator is None:
+        print("⚠️ No translation models loaded successfully")
+    else:
+        print("🎉 Translation models loaded successfully!")
 except Exception as e:
-    print(f"❌ Error loading models: {str(e)}")
+    print(f"❌ Error in translation setup: {str(e)}")
     print("Will try to load models on first request instead...")
     translator = None
     en_tl_translator = None
@@ -60,21 +102,6 @@ LANG_MODEL_MAP = {
     "tl_Latn": "Helsinki-NLP/opus-mt-en-tl",    # English to Tagalog
     "swe_Latn": "Helsinki-NLP/opus-mt-en-sv",   # English to Swedish
 }
-
-# Update CORS settings
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",  # Local development
-        "https://youtube-translator-app-s9q9.vercel.app"  # Vercel frontend
-    ],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Get port from environment variable
-port = int(os.environ.get("PORT", 8000))
 
 os.makedirs("output", exist_ok=True)
 app.mount("/output", StaticFiles(directory="output"), name="output")
@@ -407,17 +434,32 @@ def save_transcript(transcript_data: list, video_id: str) -> str:
 @app.post("/translate")
 async def translate_video(video_request: VideoRequest):
     try:
-        print(f"Received request for URL: {video_request.url}")
+        print(f"📝 Starting translation request for URL: {video_request.url}")
         video_url = video_request.url
         video_id = get_video_id(video_url)
-        print(f"Extracted video ID: {video_id}")
+        print(f"📌 Extracted video ID: {video_id}")
         
         target_lang = video_request.target_lang or "eng_Latn"
+        print(f"🎯 Target language: {target_lang}")
+        
+        # Verify directories exist
+        for directory in ["translations", "transcripts"]:
+            if not os.path.exists(directory):
+                os.makedirs(directory, exist_ok=True)
+                print(f"📁 Created missing directory: {directory}")
+        
+        # Check translation model availability
+        if not translator and not HF_ENABLED:
+            print("⚠️ Warning: No translation models available")
+            raise HTTPException(
+                status_code=500,
+                detail="Translation service is not available. Please try again later."
+            )
         
         # Check if translation already exists
         existing_translation = load_existing_translation(video_id, target_lang)
         if existing_translation:
-            print(f"Found existing translation for {video_id} -> {target_lang}")
+            print(f"🗂️ Found existing translation for {video_id} -> {target_lang}")
             return {
                 "status": "success",
                 "message": f"Loaded existing translation from {existing_translation['source_language']} (Generated: {existing_translation['generated']})",
@@ -425,16 +467,29 @@ async def translate_video(video_request: VideoRequest):
                 "translation_method": "🗂️ Cached Translation",
                 "source_language": existing_translation['source_language'],
                 "video_title": existing_translation['video_title'],
-                "result": existing_translation['translations'][:20]  # First 20 lines like normal
+                "result": existing_translation['translations'][:20]
             }
-        
+
         try:
-            # Try to find available transcripts - Korean preferred, but fallback to others
+            # Use the same robust approach as read-transcript function
             print("Looking for available transcripts...")
+            
+            # First, check if we have a saved transcript file
+            pattern = os.path.join("transcripts", f"*{video_id}*.txt")
+            files = sorted(glob(pattern), reverse=True)
+            if files:
+                print("Found existing transcript file, using it")
+                # We have a saved transcript, but we still need to get the raw data for translation
+                # Fall through to fetch from API for translation purposes
+                pass
+            
+            # Fetch from YouTube API using robust method
             transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
             
             # Try Korean first, then English, then any other language
             source_language = None
+            transcript_obj = None
+            
             try:
                 transcript_obj = transcript_list.find_transcript(['ko'])
                 source_language = "Korean"
@@ -453,11 +508,42 @@ async def translate_video(video_request: VideoRequest):
                     source_language = transcript_obj.language
                     print(f"Found {source_language} transcript (Korean/English not available)")
             
-            # Fetch the transcript data
-            transcript_data = transcript_obj.fetch()
+            # Safely fetch the transcript data with error handling
+            try:
+                transcript_data = transcript_obj.fetch()
+                print(f"Successfully fetched transcript data with {len(transcript_data)} lines")
+            except Exception as fetch_error:
+                print(f"Error fetching transcript data: {str(fetch_error)}")
+                # If fetch fails, check if we have a saved file to use
+                if files:
+                    print("Fetch failed, but we have a saved transcript file. Using fallback approach.")
+                    # Read from saved file and create minimal transcript data for translation
+                    with open(files[0], "r", encoding="utf-8") as f:
+                        content = f.read()
+                    if "="*10 in content:
+                        text_content = content.split("="*10, 1)[-1].strip()
+                    else:
+                        text_content = content
+                    
+                    # Create simple transcript data for translation
+                    lines = text_content.split('\n')
+                    transcript_data = []
+                    for i, line in enumerate(lines[:20]):  # Limit to first 20 lines
+                        if line.strip():
+                            transcript_data.append({
+                                'text': line.strip(),
+                                'start': i * 3.0,  # Approximate timing
+                                'duration': 3.0
+                            })
+                    source_language = "Korean"  # Assume Korean for saved files
+                else:
+                    raise fetch_error
             
             # Convert to the format expected by the rest of the function
-            transcript = [{"text": line.text, "start": line.start, "duration": line.duration} for line in transcript_data]
+            transcript = [{"text": line.text if hasattr(line, 'text') else line['text'], 
+                          "start": line.start if hasattr(line, 'start') else line['start'], 
+                          "duration": line.duration if hasattr(line, 'duration') else line['duration']} 
+                         for line in transcript_data]
             
             if not transcript:
                 raise HTTPException(status_code=404, detail="No subtitles found for this video.")
@@ -474,13 +560,25 @@ async def translate_video(video_request: VideoRequest):
         except Exception as e:
             error_msg = str(e)
             if "no element found" in error_msg or "No transcripts were found" in error_msg:
-                raise HTTPException(status_code=404, detail="No subtitles or transcripts found for this video. The video may not have captions available.")
+                raise HTTPException(
+                    status_code=404,
+                    detail="No subtitles found for this video. The video may not have captions available."
+                )
             elif "Video unavailable" in error_msg:
-                raise HTTPException(status_code=404, detail="Video is unavailable. It might be private or restricted.")
+                raise HTTPException(
+                    status_code=404,
+                    detail="Video is unavailable. It might be private or restricted."
+                )
             elif "ParseError" in error_msg or "XML" in error_msg:
-                raise HTTPException(status_code=404, detail="Transcript data is corrupted or unavailable for this video.")
+                raise HTTPException(
+                    status_code=404,
+                    detail="Transcript data is corrupted or unavailable for this video."
+                )
             else:
-                raise HTTPException(status_code=500, detail=f"Error retrieving transcript: {error_msg}")
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Error retrieving transcript: {error_msg}"
+                )
 
         print(f"Translating {source_language} to {target_lang}")
 
@@ -654,10 +752,36 @@ async def translate_video(video_request: VideoRequest):
             "result": translated_lines
         }
     except Exception as e:
-        print(f"Error in translate_video: {str(e)}")
-        print("Full traceback:")
+        error_msg = str(e)
+        print(f"❌ Error in translate_video: {error_msg}")
+        print("📋 Full traceback:")
         print(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=str(e))
+        
+        if "No transcripts were found" in error_msg:
+            raise HTTPException(
+                status_code=404,
+                detail="No subtitles found for this video. The video may not have captions available."
+            )
+        elif "Video unavailable" in error_msg:
+            raise HTTPException(
+                status_code=404,
+                detail="Video is unavailable. It might be private or restricted."
+            )
+        elif "Invalid YouTube URL format" in error_msg:
+            raise HTTPException(
+                status_code=400,
+                detail="Please provide a valid YouTube URL."
+            )
+        elif "Translation service is not available" in error_msg:
+            raise HTTPException(
+                status_code=503,
+                detail="Translation service is temporarily unavailable. Please try again later."
+            )
+        else:
+            raise HTTPException(
+                status_code=500,
+                detail=f"An error occurred during translation: {str(e)}"
+            )
 
 def get_captions(video_id: str) -> tuple:
     """Get captions from YouTube video using pytube"""
