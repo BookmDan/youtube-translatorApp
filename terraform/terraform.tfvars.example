@@ -1,4 +1,4 @@
-project_id           = "your-project-id"
+project_id           = "youtube-translator-123456"  # Your actual Project ID
 region              = "us-central1"
 frontend_domain     = ""  # Optional: Set if you want to use a custom domain
 huggingface_api_key = "your-huggingface-api-key" 

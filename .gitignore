@@ -70,3 +70,12 @@ Demo/
 *.jpg
 *.jpeg
 *.gif
+
+# Terraform
+terraform.tfvars
+.terraform/
+*.tfstate
+*.tfstate.*
+
+# GCP
+gcp-key.json
