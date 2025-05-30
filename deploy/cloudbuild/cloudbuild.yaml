@@ -1,7 +1,16 @@
 steps:
   # Build the container image
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['build', '-t', 'gcr.io/$PROJECT_ID/youtube-translator-backend', './backend']
+    args: [
+      'build',
+      '-t', 'gcr.io/$PROJECT_ID/youtube-translator-backend',
+      '-f', './deploy/docker/Dockerfile.prod',
+      './backend'
+    ]
+
+  # Run tests (can be added later)
+  # - name: 'gcr.io/cloud-builders/docker'
+  #   args: ['run', 'gcr.io/$PROJECT_ID/youtube-translator-backend', 'python', '-m', 'pytest']
 
   # Push the container image to Container Registry
   - name: 'gcr.io/cloud-builders/docker'
@@ -22,7 +31,15 @@ steps:
     - 'managed'
     - '--allow-unauthenticated'
     - '--set-env-vars'
-    - 'HUGGINGFACE_API_KEY=${_HUGGINGFACE_API_KEY}'
+    - 'HUGGINGFACE_API_KEY=${_HUGGINGFACE_API_KEY},ENVIRONMENT=production'
+    - '--memory'
+    - '2Gi'
+    - '--cpu'
+    - '2'
+    - '--min-instances'
+    - '0'
+    - '--max-instances'
+    - '10'
 
 images:
   - 'gcr.io/$PROJECT_ID/youtube-translator-backend'

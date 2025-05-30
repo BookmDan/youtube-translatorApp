@@ -27,13 +27,7 @@ print(f"🔧 Hugging Face API: {'Enabled' if HF_ENABLED else 'Disabled (no API k
 # Update CORS settings
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",  # Local development
-        "http://localhost:5173",  # Vite default port
-        "http://127.0.0.1:3000",
-        "http://127.0.0.1:5173",
-        "*"  # Allow all origins for now (you can restrict this in production)
-    ],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -1016,3 +1010,7 @@ async def summarize_video_transcript(request: SummarizeRequest):
         print("Full traceback:")
         print(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/")
+async def root():
+    return {"message": "YouTube Translator API is running"}

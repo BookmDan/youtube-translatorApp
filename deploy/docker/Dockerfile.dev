@@ -1,0 +1,31 @@
+FROM python:3.9-slim
+
+WORKDIR /app
+
+# Create necessary directories
+RUN mkdir -p translations transcripts model_cache output
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY . .
+
+# Ensure directories exist and have proper permissions
+RUN chmod -R 777 translations transcripts model_cache output
+
+# Set environment variables
+ENV PORT=8080
+ENV HOST=0.0.0.0
+ENV PYTHONUNBUFFERED=1
+ENV ENVIRONMENT=development
+
+# Run the FastAPI app with hot reload
+CMD exec uvicorn main:app --host 0.0.0.0 --port ${PORT} --reload 
