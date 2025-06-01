@@ -9,5 +9,5 @@ torch==2.1.1
 transformers==4.35.2
 uvicorn==0.24.0
 youtube-dl==2021.12.17
-youtube-transcript-api==0.6.1
+youtube-transcript-api==0.6.1 
 sacremoses==0.0.53 
