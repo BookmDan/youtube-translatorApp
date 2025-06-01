@@ -1,22 +1,22 @@
-const formatTimestamp = (seconds) => {
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  const secs = Math.floor(seconds % 60);
-  
-  if (hours > 0) {
-    return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-  }
-  return `${minutes}:${secs.toString().padStart(2, '0')}`;
+import React from 'react';
+import './VideoPlayer.css';
+
+const VideoPlayer = ({ videoId }) => {
+    if (!videoId) return null;
+
+    return (
+        <div className="video-container">
+            <iframe
+                width="100%"
+                height="400"
+                src={`https://www.youtube.com/embed/${videoId}`}
+                title="YouTube video player"
+                frameBorder="0"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowFullScreen
+            ></iframe>
+        </div>
+    );
 };
 
-{translations.map((item, index) => (
-  <div key={index} className="translation-item">
-    <div className="timestamp">
-      {formatTimestamp(item.start)}
-    </div>
-    <div className="translation-content">
-      <div className="original-text">{item.original}</div>
-      <div className="translated-text">{item.translated}</div>
-    </div>
-  </div>
-))} 
+export default VideoPlayer; 

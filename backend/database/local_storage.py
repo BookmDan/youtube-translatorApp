@@ -7,6 +7,7 @@ from soynlp.word import WordExtractor
 from soynlp.tokenizer import RegexTokenizer, LTokenizer
 from soynlp.normalizer import *
 from transformers import MarianMTModel, MarianTokenizer
+import glob
 
 # Create memory cards directory if it doesn't exist
 MEMORY_CARDS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "memoryCards")
@@ -223,4 +224,17 @@ def save_all_phrases_to_json(video_id: str, video_title: str, transcript_text: s
         print(f"Error saving phrases: {str(e)}")
         import traceback
         traceback.print_exc()
-        return None 
+        return None
+
+def memory_card_exists_for_video(video_id):
+    if not os.path.exists('memoryCards'):
+        return False
+    files = os.listdir('memoryCards')
+    return any(video_id in fname for fname in files)
+
+def get_latest_memory_cards_file(video_id):
+    pattern = os.path.join(MEMORY_CARDS_DIR, f"memory_cards_{video_id}_*.json")
+    files = glob.glob(pattern)
+    if not files:
+        return None
+    return max(files, key=os.path.getctime) 

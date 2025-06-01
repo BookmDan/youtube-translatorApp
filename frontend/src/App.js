@@ -19,13 +19,18 @@ import {
   MenuItem,
   Select,
   InputLabel,
-  FormControl
+  FormControl,
+  Tooltip
 } from '@mui/material';
 import YouTubeIcon from '@mui/icons-material/YouTube';
 import TranslateIcon from '@mui/icons-material/Translate';
 import GitHubIcon from '@mui/icons-material/GitHub';
 import SummarizeIcon from '@mui/icons-material/Summarize';
+import StyleIcon from '@mui/icons-material/Style';
 import axios from 'axios';
+import './App.css';
+import VideoPlayer from './components/VideoPlayer';
+import MemoryCards from './components/MemoryCards';
 
 const TRANSLATION_API_URL = (process.env.REACT_APP_API_URL || 'http://localhost:8080') + '/translate';
 const TRANSCRIPT_API_URL = (process.env.REACT_APP_API_URL || 'http://localhost:8080') + '/read-transcript';
@@ -55,6 +60,15 @@ function App() {
   const [koreanTranscript, setKoreanTranscript] = useState('');
   const [englishTranscript, setEnglishTranscript] = useState('');
   const [showEnglish, setShowEnglish] = useState(false);
+  const [videoId, setVideoId] = useState(null);
+  const [videoUrl, setVideoUrl] = useState('');
+  const [translationStatus, setTranslationStatus] = useState(null);
+  const [translationProgress, setTranslationProgress] = useState(0);
+  const [translationMethod, setTranslationMethod] = useState(null);
+  const [sourceLanguage, setSourceLanguage] = useState(null);
+  const [translations, setTranslations] = useState([]);
+  const [subtitleCount, setSubtitleCount] = useState(0);
+  const [showMemoryCards, setShowMemoryCards] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -75,6 +89,12 @@ function App() {
     }
 
     try {
+      // Extract video ID from URL
+      const videoIdMatch = url.match(/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/);
+      if (videoIdMatch) {
+        setVideoId(videoIdMatch[1]);
+      }
+
       const response = await axios.post(TRANSLATION_API_URL, {
         url: url,
         start_time: 0,
@@ -114,6 +134,12 @@ function App() {
     }
 
     try {
+      // Extract video ID from URL
+      const videoIdMatch = url.match(/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/);
+      if (videoIdMatch) {
+        setVideoId(videoIdMatch[1]);
+      }
+
       const response = await fetch(TRANSCRIPT_API_URL, {
         method: 'POST',
         headers: {
@@ -181,6 +207,10 @@ function App() {
 
   return (
     <Box sx={{ minHeight: '100vh', bgcolor: '#f6f8fa' }}>
+      {/* Memory Cards Fullscreen Overlay */}
+      {showMemoryCards && videoId && (
+        <MemoryCards videoId={videoId} onClose={() => setShowMemoryCards(false)} />
+      )}
       {/* Header */}
       <AppBar position="static" sx={{ bgcolor: '#6c47ff' }}>
         <Toolbar>
@@ -206,7 +236,7 @@ function App() {
         <Paper elevation={3} sx={{ p: 4, borderRadius: 3 }}>
           <Box display="flex" alignItems="center" mb={2}>
             <YouTubeIcon color="error" sx={{ fontSize: 40, mr: 2 }} />
-            <Box>
+            <Box sx={{ flexGrow: 1 }}>
               <Typography variant="h5" fontWeight={700}>
                 Translate Korean YouTube Videos
               </Typography>
@@ -214,6 +244,31 @@ function App() {
                 Enter a YouTube URL to translate Korean subtitles to your selected language. The tool will extract the subtitles, translate them using a serverless function with PyTorch and the Helsinki-NLP model, and provide a side-by-side view.
               </Typography>
             </Box>
+            {videoId && (
+              <Tooltip title="Show top 20 most frequent phrases as memory cards">
+                <Button
+                  variant="outlined"
+                  color="primary"
+                  size="medium"
+                  startIcon={<StyleIcon />}
+                  sx={{
+                    ml: 2,
+                    borderRadius: 2,
+                    fontWeight: 600,
+                    fontSize: 15,
+                    px: 2.5,
+                    py: 0.5,
+                    boxShadow: 0,
+                    textTransform: 'none',
+                    height: 40,
+                    minWidth: 0
+                  }}
+                  onClick={() => setShowMemoryCards(true)}
+                >
+                  Memory Cards
+                </Button>
+              </Tooltip>
+            )}
           </Box>
           <form onSubmit={handleSubmit}>
             <FormControl fullWidth sx={{ mb: 2 }}>

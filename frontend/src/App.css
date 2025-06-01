@@ -43,4 +43,24 @@
   border-radius: 5px;
   font-size: 14px;
   line-height: 1.6;
+}
+
+.memory-cards-toggle {
+    background-color: #4CAF50;
+    color: white;
+    padding: 10px 20px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 16px;
+    transition: background-color 0.3s;
+}
+
+.memory-cards-toggle:hover {
+    background-color: #45a049;
+}
+
+.memory-cards-toggle.active {
+    background-color: #45a049;
+    box-shadow: 0 0 5px rgba(0,0,0,0.2);
 } 

@@ -16,6 +16,7 @@ from pytube import YouTube
 from glob import glob
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+from database.local_storage import save_frequent_phrases_from_transcript, get_memory_cards_by_video_id, memory_card_exists_for_video, save_all_phrases_to_json, get_latest_memory_cards_file
 
 app = FastAPI()
 
@@ -595,12 +596,28 @@ async def translate_video(video_request: VideoRequest):
         print(f"📌 Extracted video ID: {video_id}")
         
         target_lang = video_request.target_lang or "eng_Latn"
-        print(f"�� Target language: {target_lang}")
+        print(f" Target language: {target_lang}")
 
         # First check for existing translation
         existing_translation = load_existing_translation(video_id, target_lang)
         if existing_translation:
             print(f"Using cached translation for video {video_id}")
+            # Always try to generate memory cards if not present
+            try:
+                if not memory_card_exists_for_video(video_id):
+                    full_transcript = " ".join([item["original"] for item in existing_translation["translations"]])
+                    video_title = existing_translation.get("video_title", f"video_{video_id}")
+                    translation_dict = {item["original"]: item["translated"] for item in existing_translation["translations"]}
+                    save_all_phrases_to_json(
+                        video_id=video_id,
+                        video_title=video_title,
+                        transcript_text=full_transcript,
+                        translations=translation_dict
+                    )
+                    print(f"✅ Memory cards generated and saved for video {video_id} (from cache)")
+            except Exception as e:
+                print(f"❌ Error generating memory cards from cache: {str(e)}")
+
             # Return only first 20 lines for the translation view
             return {
                 "status": "success",
@@ -716,6 +733,21 @@ async def translate_video(video_request: VideoRequest):
                 f.write(f"Video ID: {video_id}\n")
                 f.write("="*50 + "\n")
                 f.write(formatted_transcript)
+
+            # Generate memory cards
+            try:
+                video_title = get_video_title(video_id)
+                full_transcript = " ".join([line['text'] if isinstance(line, dict) else line.text for line in transcript_data])
+                translation_dict = {item["original"]: item["translated"] for item in translations} if translations else {}
+                save_all_phrases_to_json(
+                    video_id=video_id,
+                    video_title=video_title,
+                    transcript_text=full_transcript,
+                    translations=translation_dict
+                )
+                print(f"✅ Memory cards generated and saved for video {video_id}")
+            except Exception as e:
+                print(f"❌ Error generating memory cards: {str(e)}")
 
             # Start background translation for remaining lines
             asyncio.create_task(process_remaining_translations(transcript_data, video_id, source_language, target_lang))
@@ -877,7 +909,22 @@ async def read_transcript(video_request: VideoRequest):
                     # Extract only the paragraphs (after the separator)
                     ko_paragraph = ko_content.split("="*50, 1)[-1].strip() if "="*50 in ko_content else ko_content
                     en_paragraph = en_content.split("="*50, 1)[-1].strip() if "="*50 in en_content else en_content
-                    
+
+                    # Always try to generate memory cards if not present
+                    try:
+                        if not memory_card_exists_for_video(video_id):
+                            video_title = f"video_{video_id}"
+                            transcript_text = ko_paragraph
+                            save_all_phrases_to_json(
+                                video_id=video_id,
+                                video_title=video_title,
+                                transcript_text=transcript_text,
+                                translations={}
+                            )
+                            print(f"✅ Memory cards generated and saved for video {video_id} (from cached transcript)")
+                    except Exception as e:
+                        print(f"❌ Error generating memory cards from cached transcript: {str(e)}")
+
                     return {
                         "status": "success",
                         "message": "Loaded saved transcripts.",
@@ -967,6 +1014,20 @@ async def read_transcript(video_request: VideoRequest):
                 ko_paragraph = ko_content.split("="*50, 1)[-1].strip() if "="*50 in ko_content else ko_content
                 en_paragraph = en_content.split("="*50, 1)[-1].strip() if "="*50 in en_content else en_content
                 
+                # Generate memory cards
+                try:
+                    video_title = get_video_title(video_id)
+                    full_transcript = " ".join([line['text'] if isinstance(line, dict) else line.text for line in transcript_data])
+                    save_all_phrases_to_json(
+                        video_id=video_id,
+                        video_title=video_title,
+                        transcript_text=full_transcript,
+                        translations={}
+                    )
+                    print(f"✅ Memory cards generated and saved for video {video_id}")
+                except Exception as e:
+                    print(f"❌ Error generating memory cards: {str(e)}")
+
                 return {
                     "status": "success",
                     "message": f"Fetched and saved new transcripts.",
@@ -1026,3 +1087,22 @@ def get_captions(video_id: str):
     except Exception as e:
         print(f"Error getting captions: {str(e)}")
         return None, None
+
+@app.get("/memory-cards/{video_id}")
+async def get_memory_cards(video_id: str):
+    """Get memory cards for a specific video"""
+    try:
+        latest_file = get_latest_memory_cards_file(video_id)
+        if not latest_file:
+            return {"status": "success", "message": "No memory cards found", "memory_cards": []}
+        with open(latest_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return {
+            "status": "success",
+            "message": f"Retrieved {len(data.get('phrases', []))} memory cards",
+            "memory_cards": data.get('phrases', [])
+        }
+    except Exception as e:
+        print(f"Error getting memory cards: {str(e)}")
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
