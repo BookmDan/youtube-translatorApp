@@ -136,8 +136,26 @@ def get_video_id(url: str) -> str:
 def get_video_title(video_id: str) -> str:
     """Get the title of a YouTube video"""
     try:
-        yt = YouTube(f"https://www.youtube.com/watch?v={video_id}")
-        return yt.title
+        # First try using pytube
+        try:
+            yt = YouTube(f"https://www.youtube.com/watch?v={video_id}")
+            return yt.title
+        except Exception as e:
+            print(f"Pytube failed to get title: {str(e)}")
+            
+        # Fallback: Try using YouTube API
+        try:
+            response = requests.get(
+                f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json"
+            )
+            if response.status_code == 200:
+                return response.json()['title']
+        except Exception as e:
+            print(f"YouTube API failed to get title: {str(e)}")
+            
+        # If all methods fail, return a fallback title
+        return f"video_{video_id}"
+        
     except Exception as e:
         print(f"Error getting video title: {str(e)}")
         return f"video_{video_id}"
@@ -377,14 +395,24 @@ def save_transcript(transcript_data, video_id):
         print(f"Sanitized title: {sanitized_title}")
 
         # Format the transcript
-        formatted_text = ""
-        for entry in transcript_data:
-            if isinstance(entry, dict) and 'text' in entry:
-                formatted_text += entry['text'] + "\n"
-            elif isinstance(entry, str):
-                formatted_text += entry + "\n"
+        formatted_transcript = ""
+        current_paragraph = []
+
+        for line in transcript_data:
+            if isinstance(line, dict) and 'text' in line:
+                current_paragraph.append(line['text'])
+            elif isinstance(line, str):
+                current_paragraph.append(line)
+            # Start new paragraph if we hit a music marker or long pause
+            if any("[음악]" in text for text in current_paragraph) or (len(current_paragraph) > 1 and isinstance(line, dict) and 'start' in line and isinstance(transcript_data[transcript_data.index(line)-1], dict) and 'start' in transcript_data[transcript_data.index(line)-1] and line['start'] - transcript_data[transcript_data.index(line)-1]['start'] > 2):
+                formatted_transcript += " ".join(current_paragraph) + "\n\n"
+                current_paragraph = []
+
+        # Add any remaining text
+        if current_paragraph:
+            formatted_transcript += " ".join(current_paragraph)
         
-        print(f"Full transcript length: {len(formatted_text)}")
+        print(f"Full transcript length: {len(formatted_transcript)}")
         
         # Save Korean transcript
         ko_file = os.path.join(transcripts_dir, f"{sanitized_title}_{video_id}_ko.txt")
@@ -393,7 +421,7 @@ def save_transcript(transcript_data, video_id):
             f.write(f"Video Title: {video_title}\n")
             f.write(f"Video ID: {video_id}\n")
             f.write("="*50 + "\n")
-            f.write(formatted_text)
+            f.write(formatted_transcript)
         print("Korean transcript saved successfully")
 
         # Translate and save English transcript
@@ -403,7 +431,7 @@ def save_transcript(transcript_data, video_id):
                 raise Exception("Local translator not loaded")
             
             # Split text into smaller chunks for translation
-            chunks = [formatted_text[i:i+500] for i in range(0, len(formatted_text), 500)]
+            chunks = [formatted_transcript[i:i+500] for i in range(0, len(formatted_transcript), 500)]
             translated_chunks = []
             
             for i, chunk in enumerate(chunks):
@@ -466,57 +494,7 @@ async def translate_video(video_request: VideoRequest):
                 "result": existing_translation["translations"]
             }
 
-        # If no translation found, check for existing transcript
-        pattern = os.path.join("transcripts", f"*{video_id}*.txt")
-        files = sorted(glob(pattern), reverse=True)
-        
-        if files:
-            print(f"Found existing transcript files")
-            try:
-                # Get both Korean and English transcripts
-                ko_file = next((f for f in files if f.endswith("_ko.txt")), None)
-                en_file = next((f for f in files if f.endswith("_en.txt")), None)
-                
-                if ko_file and en_file:
-                    print("Using existing transcripts for translation")
-                    with open(ko_file, "r", encoding="utf-8") as f:
-                        ko_content = f.read()
-                    with open(en_file, "r", encoding="utf-8") as f:
-                        en_content = f.read()
-                    
-                    # Extract only the paragraphs (after the separator)
-                    ko_paragraph = ko_content.split("="*50, 1)[-1].strip() if "="*50 in ko_content else ko_content
-                    en_paragraph = en_content.split("="*50, 1)[-1].strip() if "="*50 in en_content else en_content
-                    
-                    # Create translation data from existing transcripts
-                    translation_data = []
-                    ko_lines = ko_paragraph.split('\n')
-                    en_lines = en_paragraph.split('\n')
-                    
-                    for i, (ko_line, en_line) in enumerate(zip(ko_lines, en_lines)):
-                        if ko_line.strip() and en_line.strip():
-                            translation_data.append({
-                                "original": ko_line.strip(),
-                                "start": i * 5,  # Approximate timing
-                                "duration": 5,   # Approximate duration
-                                "translation": en_line.strip()
-                            })
-                    
-                    # Save the translation for future use
-                    save_translation(translation_data, video_id, "Korean", target_lang)
-                    
-                    return {
-                        "status": "success",
-                        "message": "Translated using existing transcripts.",
-                        "subtitle_count": len(translation_data),
-                        "translation_method": "📝 Existing Transcripts",
-                        "source_language": "Korean",
-                        "result": translation_data
-                    }
-            except Exception as e:
-                print(f"Error using existing transcripts: {str(e)}")
-        
-        # If no existing translation or transcript found, proceed with new translation
+        # If no translation found, proceed with new translation
         try:
             transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
             
@@ -554,8 +532,8 @@ async def translate_video(video_request: VideoRequest):
 
         # Translate using local model
         translated_lines = []
-        for i, line in enumerate(transcript[:20]):  # Translate first 20 lines
-            print(f"Translating line {i+1}/20")
+        for i, line in enumerate(transcript):
+            print(f"Translating line {i+1}/{len(transcript)}")
             try:
                 translation = translator(line['text'])[0]['translation_text']
                 translation = remove_phrase_repetition(translation, max_repeat=1)
@@ -574,7 +552,7 @@ async def translate_video(video_request: VideoRequest):
 
         return {
             "status": "success",
-            "message": f"Translated first 20 lines of {len(transcript)} total lines from Korean",
+            "message": f"Translated {len(translated_lines)} lines from Korean",
             "subtitle_count": len(transcript),
             "translation_method": "🔄 Local Model",
             "source_language": "Korean",
@@ -689,9 +667,12 @@ async def get_transcript(video_request: VideoRequest):
             current_paragraph = []
             
             for line in transcript_data:
-                current_paragraph.append(line.text)
+                if isinstance(line, dict) and 'text' in line:
+                    current_paragraph.append(line['text'])
+                elif isinstance(line, str):
+                    current_paragraph.append(line)
                 # Start new paragraph if we hit a music marker or long pause
-                if "[음악]" in line.text or (len(current_paragraph) > 1 and line.start - transcript_data[transcript_data.index(line)-1].start > 2):
+                if any("[음악]" in text for text in current_paragraph) or (len(current_paragraph) > 1 and isinstance(line, dict) and 'start' in line and isinstance(transcript_data[transcript_data.index(line)-1], dict) and 'start' in transcript_data[transcript_data.index(line)-1] and line['start'] - transcript_data[transcript_data.index(line)-1]['start'] > 2):
                     formatted_transcript += " ".join(current_paragraph) + "\n\n"
                     current_paragraph = []
             
