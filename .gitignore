@@ -71,12 +71,18 @@ Demo/
 *.jpeg
 *.gif
 
-# Terraform
-terraform.tfvars
-.terraform/
-*.tfstate
-*.tfstate.*
-
 # GCP
 gcp-key.json
-.env
+
+# Generated files
+backend/translations/
+backend/transcripts/
+backend/memoryCards/
+backend/model_cache/
+backend/output/
+
+# Environment variables
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
