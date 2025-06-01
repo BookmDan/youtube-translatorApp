@@ -14,6 +14,8 @@ import torch
 import re
 from pytube import YouTube
 from glob import glob
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
 app = FastAPI()
 
@@ -300,6 +302,39 @@ def save_full_transcript(transcript_data: list, video_id: str) -> str:
     
     return filepath
 
+def load_existing_translation(video_id: str, target_lang: str) -> dict:
+    """Check if a translation already exists for this video and target language"""
+    try:
+        translations_dir = os.path.join(os.getcwd(), "translations")
+        if not os.path.exists(translations_dir):
+            return None
+        
+        # Look for translation files for this video ID
+        pattern = os.path.join(translations_dir, f"*{video_id}*.json")
+        files = sorted(glob(pattern), reverse=True)  # Most recent first
+        
+        if files:
+            print(f"Found existing translation files: {files}")
+            
+            # Try each file until we find one with translations
+            for file in files:
+                with open(file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if data.get("translations") and len(data["translations"]) > 0:
+                        print(f"Loaded cached translation with {len(data['translations'])} lines from {file}")
+                        return data
+                    else:
+                        print(f"Skipping empty translation file: {file}")
+            
+            print("No non-empty translation files found")
+            return None
+        
+        return None
+        
+    except Exception as e:
+        print(f"Error loading existing translation: {str(e)}")
+        return None
+
 def save_translation(translation_data: list, video_id: str, source_language: str, target_lang: str) -> str:
     """Save translation results to file"""
     try:
@@ -313,14 +348,8 @@ def save_translation(translation_data: list, video_id: str, source_language: str
         print(f"Creating translations directory at: {translations_dir}")
         os.makedirs(translations_dir, exist_ok=True)
         
-        # Sanitize video title for filename
-        safe_title = "".join(c for c in video_title if c.isalnum() or c in (' ', '-', '_')).strip()
-        safe_title = safe_title.replace(' ', '_')
-        print(f"Sanitized title: {safe_title}")
-        
-        # Create filename with timestamp and language info
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"translation_{timestamp}_{safe_title}_{source_language[:2]}_to_{target_lang}.json"
+        # Create filename with video ID and target language
+        filename = f"translation_{video_id}_{target_lang}.json"
         filepath = os.path.join(translations_dir, filename)
         print(f"Will save to file: {filepath}")
         
@@ -347,29 +376,6 @@ def save_translation(translation_data: list, video_id: str, source_language: str
         print(f"Error saving translation: {str(e)}")
         print(f"Current working directory: {os.getcwd()}")
         print(f"Translation data length: {len(translation_data)}")
-        return None
-
-def load_existing_translation(video_id: str, target_lang: str) -> dict:
-    """Check if a translation already exists for this video and target language"""
-    try:
-        translations_dir = os.path.join(os.getcwd(), "translations")
-        if not os.path.exists(translations_dir):
-            return None
-        
-        # Look for translation files for this video and target language
-        pattern = os.path.join(translations_dir, f"*{video_id}*_to_{target_lang}.json")
-        files = sorted(glob(pattern), reverse=True)  # Most recent first
-        
-        if files:
-            print(f"Found existing translation file: {files[0]}")
-            with open(files[0], "r", encoding="utf-8") as f:
-                data = json.load(f)
-            return data
-        
-        return None
-        
-    except Exception as e:
-        print(f"Error loading existing translation: {str(e)}")
         return None
 
 def save_transcript(transcript_data, video_id):
@@ -399,14 +405,17 @@ def save_transcript(transcript_data, video_id):
         current_paragraph = []
 
         for line in transcript_data:
-            if isinstance(line, dict) and 'text' in line:
-                current_paragraph.append(line['text'])
-            elif isinstance(line, str):
-                current_paragraph.append(line)
-            # Start new paragraph if we hit a music marker or long pause
-            if any("[음악]" in text for text in current_paragraph) or (len(current_paragraph) > 1 and isinstance(line, dict) and 'start' in line and isinstance(transcript_data[transcript_data.index(line)-1], dict) and 'start' in transcript_data[transcript_data.index(line)-1] and line['start'] - transcript_data[transcript_data.index(line)-1]['start'] > 2):
-                formatted_transcript += " ".join(current_paragraph) + "\n\n"
-                current_paragraph = []
+            if isinstance(line, dict):
+                text = line.get('text', '')
+            else:
+                text = line.text if hasattr(line, 'text') else str(line)
+            
+            if text:
+                current_paragraph.append(text)
+                # Start new paragraph if we hit a music marker or long pause
+                if any("[음악]" in text for text in current_paragraph) or (len(current_paragraph) > 1 and isinstance(line, dict) and 'start' in line and isinstance(transcript_data[transcript_data.index(line)-1], dict) and 'start' in transcript_data[transcript_data.index(line)-1] and line['start'] - transcript_data[transcript_data.index(line)-1]['start'] > 2):
+                    formatted_transcript += " ".join(current_paragraph) + "\n\n"
+                    current_paragraph = []
 
         # Add any remaining text
         if current_paragraph:
@@ -456,6 +465,34 @@ def save_transcript(transcript_data, video_id):
                 f.write(english_text)
             print("English transcript saved successfully")
             
+            # Also save the translation data for the translate endpoint
+            translations = []
+            for i, line in enumerate(transcript_data):
+                try:
+                    text = line['text'] if isinstance(line, dict) else line.text
+                    start = line['start'] if isinstance(line, dict) else line.start
+                    duration = line['duration'] if isinstance(line, dict) else line.duration
+                    
+                    # Find the corresponding translation in the chunks
+                    chunk_index = i // 500
+                    if chunk_index < len(translated_chunks):
+                        translated = translated_chunks[chunk_index]
+                    else:
+                        translated = text
+                    
+                    translations.append({
+                        "original": text,
+                        "translated": translated,
+                        "start": start,
+                        "duration": duration
+                    })
+                except Exception as e:
+                    print(f"Error processing line {i}: {str(e)}")
+                    continue
+            
+            # Save the translation data
+            save_translation(translations, video_id, "Korean", "eng_Latn")
+            
             return ko_file, en_file
         except Exception as e:
             print(f"Error during translation: {str(e)}")
@@ -470,6 +507,85 @@ def save_transcript(transcript_data, video_id):
         print(traceback.format_exc())
         return None, None
 
+executor = ThreadPoolExecutor(max_workers=1)  # Single worker for translations
+
+async def process_remaining_translations(transcript_data, video_id, source_language, target_lang, start_index=20):
+    """Process remaining translations in the background"""
+    try:
+        print(f"Starting background translation from line {start_index}")
+        translations = []
+        formatted_transcript = ""
+        current_paragraph = []
+        
+        for line in transcript_data[start_index:]:
+            try:
+                # Access transcript data correctly
+                text = line['text'] if isinstance(line, dict) else line.text
+                start = line['start'] if isinstance(line, dict) else line.start
+                duration = line['duration'] if isinstance(line, dict) else line.duration
+                
+                # Translate the text
+                translated = translator(text)[0]['translation_text']
+                
+                # Add to translations list
+                translations.append({
+                    "original": text,
+                    "translated": translated,
+                    "start": start,
+                    "duration": duration
+                })
+                
+                # Build formatted transcript
+                current_paragraph.append(translated)
+                if any("[음악]" in text for text in current_paragraph) or (len(current_paragraph) > 1 and isinstance(line, dict) and 'start' in line and isinstance(transcript_data[transcript_data.index(line)-1], dict) and 'start' in transcript_data[transcript_data.index(line)-1] and line['start'] - transcript_data[transcript_data.index(line)-1]['start'] > 2):
+                    formatted_transcript += " ".join(current_paragraph) + "\n\n"
+                    current_paragraph = []
+                    
+            except Exception as e:
+                print(f"Error translating line in background: {str(e)}")
+                continue
+
+        # Add any remaining text
+        if current_paragraph:
+            formatted_transcript += " ".join(current_paragraph)
+
+        # Load existing translations
+        existing_translation = load_existing_translation(video_id, target_lang)
+        if existing_translation:
+            # Combine with existing translations
+            all_translations = existing_translation["translations"][:start_index] + translations
+        else:
+            all_translations = translations
+
+        # Save the full translation
+        save_translation(all_translations, video_id, source_language, target_lang)
+        
+        # Update the English transcript file
+        try:
+            video = YouTube(f"https://www.youtube.com/watch?v={video_id}")
+            video_title = video.title
+        except Exception as e:
+            print(f"Error getting video title: {str(e)}")
+            video_title = f"video_{video_id}"
+        
+        sanitized_title = "".join(c for c in video_title if c.isalnum() or c in (' ', '-', '_')).rstrip()
+        en_file = os.path.join("transcripts", f"{sanitized_title}_{video_id}_en.txt")
+        
+        # Read existing content
+        with open(en_file, "r", encoding="utf-8") as f:
+            existing_content = f.read()
+        
+        # Append new content
+        with open(en_file, "w", encoding="utf-8") as f:
+            f.write(existing_content)
+            f.write(formatted_transcript)
+            
+        print(f"Completed background translation of {len(translations)} lines")
+        
+    except Exception as e:
+        print(f"Error in background translation: {str(e)}")
+        print(traceback.format_exc())
+
 @app.post("/translate")
 async def translate_video(video_request: VideoRequest):
     try:
@@ -479,85 +595,147 @@ async def translate_video(video_request: VideoRequest):
         print(f"📌 Extracted video ID: {video_id}")
         
         target_lang = video_request.target_lang or "eng_Latn"
-        print(f"🎯 Target language: {target_lang}")
+        print(f"�� Target language: {target_lang}")
 
         # First check for existing translation
         existing_translation = load_existing_translation(video_id, target_lang)
         if existing_translation:
-            print(f"Found existing translation for video {video_id}")
+            print(f"Using cached translation for video {video_id}")
+            # Return only first 20 lines for the translation view
             return {
                 "status": "success",
                 "message": "Loaded existing translation from cache.",
                 "subtitle_count": existing_translation["subtitle_count"],
                 "translation_method": "📂 Cached",
                 "source_language": existing_translation["source_language"],
-                "result": existing_translation["translations"]
+                "result": existing_translation["translations"][:20]  # Only return first 20 lines
             }
 
         # If no translation found, proceed with new translation
         try:
+            # Get transcript using YouTube Transcript API
             transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+            print("Available transcripts:", transcript_list)
             
-            # Try to get Korean transcript first
+            # Try Korean first, then English, then any other language
             try:
-                transcript = transcript_list.find_transcript(['ko']).fetch()
+                transcript = transcript_list.find_transcript(['ko'])
                 source_language = "Korean"
-                print(f"Found Korean transcript with {len(transcript)} lines")
+                print(f"Found {source_language} transcript")
             except:
-                # If Korean not available, try English
                 try:
-                    transcript = transcript_list.find_transcript(['en']).fetch()
+                    transcript = transcript_list.find_transcript(['en'])
                     source_language = "English"
-                    print(f"Found English transcript with {len(transcript)} lines")
+                    print(f"Found {source_language} transcript")
                 except:
-                    # If neither Korean nor English available, get any available transcript
-                    available_transcripts = list(transcript_list)
-                    if not available_transcripts:
-                        raise HTTPException(status_code=404, detail="No subtitles found for this video.")
-                    transcript = available_transcripts[0].fetch()
-                    source_language = available_transcripts[0].language
-                    print(f"Found {source_language} transcript with {len(transcript)} lines")
+                    # Get first available transcript
+                    transcript = transcript_list.find_transcript()
+                    source_language = transcript.language
+                    print(f"Found {source_language} transcript")
+            
+            try:
+                transcript_data = transcript.fetch()
+                print(f"Got {len(transcript_data)} lines of transcript")
+            except Exception as e:
+                print(f"Error fetching transcript: {str(e)}")
+                # Try alternative method using pytube
+                caption, language = get_captions(video_id)
+                if caption:
+                    print(f"Using pytube captions in {language}")
+                    caption_text = caption.generate_srt_captions()
+                    # Convert SRT to list of dicts
+                    transcript_data = []
+                    current_text = []
+                    for line in caption_text.split('\n'):
+                        if '-->' in line:
+                            if current_text:
+                                transcript_data.append({
+                                    'text': ' '.join(current_text),
+                                    'start': parse_srt_time(line.split('-->')[0].strip()),
+                                    'duration': parse_srt_time(line.split('-->')[1].strip()) - parse_srt_time(line.split('-->')[0].strip())
+                                })
+                                current_text = []
+                        elif line.strip() and not line.isdigit():
+                            current_text.append(line.strip())
+                else:
+                    raise HTTPException(status_code=404, detail="No subtitles or captions found for this video.")
+
+            # Process first 20 lines for immediate response
+            translations = []
+            formatted_transcript = ""
+            current_paragraph = []
+            
+            for line in transcript_data[:20]:
+                try:
+                    # Access transcript data correctly
+                    text = line['text'] if isinstance(line, dict) else line.text
+                    start = line['start'] if isinstance(line, dict) else line.start
+                    duration = line['duration'] if isinstance(line, dict) else line.duration
+                    
+                    # Translate the text
+                    translated = translator(text)[0]['translation_text']
+                    
+                    # Add to translations list
+                    translations.append({
+                        "original": text,
+                        "translated": translated,
+                        "start": start,
+                        "duration": duration
+                    })
+                    
+                    # Build formatted transcript
+                    current_paragraph.append(translated)
+                    if any("[음악]" in text for text in current_paragraph) or (len(current_paragraph) > 1 and isinstance(line, dict) and 'start' in line and isinstance(transcript_data[transcript_data.index(line)-1], dict) and 'start' in transcript_data[transcript_data.index(line)-1] and line['start'] - transcript_data[transcript_data.index(line)-1]['start'] > 2):
+                        formatted_transcript += " ".join(current_paragraph) + "\n\n"
+                        current_paragraph = []
+                        
+                except Exception as e:
+                    print(f"Error translating line: {str(e)}")
+                    continue
+
+            # Add any remaining text
+            if current_paragraph:
+                formatted_transcript += " ".join(current_paragraph)
+
+            # Save initial translation
+            save_translation(translations, video_id, source_language, target_lang)
+            
+            # Save initial English transcript
+            try:
+                video = YouTube(f"https://www.youtube.com/watch?v={video_id}")
+                video_title = video.title
+            except Exception as e:
+                print(f"Error getting video title: {str(e)}")
+                video_title = f"video_{video_id}"
+            
+            sanitized_title = "".join(c for c in video_title if c.isalnum() or c in (' ', '-', '_')).rstrip()
+            en_file = os.path.join("transcripts", f"{sanitized_title}_{video_id}_en.txt")
+            
+            with open(en_file, "w", encoding="utf-8") as f:
+                f.write(f"Video Title: {video_title}\n")
+                f.write(f"Video ID: {video_id}\n")
+                f.write("="*50 + "\n")
+                f.write(formatted_transcript)
+
+            # Start background translation for remaining lines
+            asyncio.create_task(process_remaining_translations(transcript_data, video_id, source_language, target_lang))
+
+            return {
+                "status": "success",
+                "message": f"Translated first 20 lines from {source_language}. Continuing translation in background...",
+                "subtitle_count": len(transcript_data),
+                "translation_method": "🔄 Local Model",
+                "source_language": source_language,
+                "result": translations
+            }
             
         except Exception as e:
-            print(f"Error getting transcript: {str(e)}")
-            raise HTTPException(status_code=404, detail="No subtitles found for this video.")
-
-        # If source language is not Korean, we can't translate it
-        if source_language != "Korean":
-            return {
-                "status": "error",
-                "message": f"This video has {source_language} subtitles, but we can only translate from Korean. Please try a video with Korean subtitles.",
-                "source_language": source_language
-            }
-
-        # Translate using local model
-        translated_lines = []
-        for i, line in enumerate(transcript):
-            print(f"Translating line {i+1}/{len(transcript)}")
-            try:
-                translation = translator(line['text'])[0]['translation_text']
-                translation = remove_phrase_repetition(translation, max_repeat=1)
-                translated_lines.append({
-                    "original": line['text'],
-                    "start": line['start'],
-                    "duration": line['duration'],
-                    "translation": translation
-                })
-            except Exception as e:
-                print(f"Error translating line {i+1}: {str(e)}")
-                continue
-
-        # Save the translation for future use
-        save_translation(translated_lines, video_id, "Korean", target_lang)
-
-        return {
-            "status": "success",
-            "message": f"Translated {len(translated_lines)} lines from Korean",
-            "subtitle_count": len(transcript),
-            "translation_method": "🔄 Local Model",
-            "source_language": "Korean",
-            "result": translated_lines
-        }
+            error_msg = str(e)
+            print(f"❌ Error in translate_video: {error_msg}")
+            print("📋 Full traceback:")
+            print(traceback.format_exc())
+            raise HTTPException(status_code=500, detail=str(e))
+            
     except Exception as e:
         error_msg = str(e)
         print(f"❌ Error in translate_video: {error_msg}")
@@ -565,42 +743,13 @@ async def translate_video(video_request: VideoRequest):
         print(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
 
-def get_captions(video_id: str) -> tuple:
-    """Get captions from YouTube video using pytube"""
+def parse_srt_time(time_str: str) -> float:
+    """Convert SRT time format (HH:MM:SS,mmm) to seconds"""
     try:
-        yt = YouTube(f"https://www.youtube.com/watch?v={video_id}")
-        print(f"Video title: {yt.title}")
-        
-        # Get available caption tracks
-        caption_tracks = yt.captions
-        print(f"Available caption tracks: {caption_tracks}")
-        
-        # Try to get Korean captions first
-        try:
-            caption = caption_tracks.get_by_language_code('ko')
-            if caption:
-                return caption, "Korean"
-        except:
-            pass
-            
-        # Try English if Korean not available
-        try:
-            caption = caption_tracks.get_by_language_code('en')
-            if caption:
-                return caption, "English"
-        except:
-            pass
-            
-        # Get first available caption
-        if caption_tracks:
-            first_caption = list(caption_tracks.values())[0]
-            return first_caption, first_caption.name
-            
-        return None, None
-        
-    except Exception as e:
-        print(f"Error getting captions: {str(e)}")
-        return None, None
+        hours, minutes, seconds = time_str.replace(',', '.').split(':')
+        return float(hours) * 3600 + float(minutes) * 60 + float(seconds)
+    except:
+        return 0
 
 @app.post("/get-transcript")
 async def get_transcript(video_request: VideoRequest):
@@ -761,60 +910,70 @@ async def read_transcript(video_request: VideoRequest):
             try:
                 transcript_data = transcript_obj.fetch()
                 print(f"Found {language} transcript with {len(transcript_data)} lines")
-                
-                # Save both original and translated transcripts
-                ko_file, en_file = save_transcript(transcript_data, video_id)
-                
-                if ko_file and en_file:
-                    with open(ko_file, "r", encoding="utf-8") as f:
-                        ko_content = f.read()
-                    with open(en_file, "r", encoding="utf-8") as f:
-                        en_content = f.read()
-                    
-                    ko_paragraph = ko_content.split("="*50, 1)[-1].strip() if "="*50 in ko_content else ko_content
-                    en_paragraph = en_content.split("="*50, 1)[-1].strip() if "="*50 in en_content else en_content
-                    
-                    return {
-                        "status": "success",
-                        "message": f"Fetched and saved new transcripts.",
-                        "korean_transcript": ko_paragraph,
-                        "english_transcript": en_paragraph
-                    }
             except Exception as e:
-                error_msg = str(e)
-                print(f"Error fetching transcript: {error_msg}")
-                if "no element found" in error_msg:
-                    # Try alternative method using pytube
-                    caption, caption_language = get_captions(video_id)
-                    if caption:
-                        caption_text = caption.generate_srt_captions()
-                        # Convert SRT to readable text
-                        formatted_text = ""
-                        for line in caption_text.split('\n'):
-                            if line.strip() and not line.isdigit() and not '-->' in line:
-                                formatted_text += line.strip() + "\n"
-                        
-                        # Save the transcript
-                        ko_file, en_file = save_transcript([{"text": formatted_text}], video_id)
-                        
-                        if ko_file and en_file:
-                            with open(ko_file, "r", encoding="utf-8") as f:
-                                ko_content = f.read()
-                            with open(en_file, "r", encoding="utf-8") as f:
-                                en_content = f.read()
-                            
-                            ko_paragraph = ko_content.split("="*50, 1)[-1].strip() if "="*50 in ko_content else ko_content
-                            en_paragraph = en_content.split("="*50, 1)[-1].strip() if "="*50 in en_content else en_content
-                            
-                            return {
-                                "status": "success",
-                                "message": f"Fetched and saved new transcripts using alternative method.",
-                                "korean_transcript": ko_paragraph,
-                                "english_transcript": en_paragraph
-                            }
-                
-                raise HTTPException(status_code=404, detail=f"No subtitles or captions found for this video. {error_msg}")
+                print(f"Error fetching transcript: {str(e)}")
+                # Try alternative method using pytube
+                caption, caption_language = get_captions(video_id)
+                if caption:
+                    print(f"Using pytube captions in {caption_language}")
+                    caption_text = caption.generate_srt_captions()
+                    # Convert SRT to list of dicts
+                    transcript_data = []
+                    current_text = []
+                    for line in caption_text.split('\n'):
+                        if '-->' in line:
+                            if current_text:
+                                transcript_data.append({
+                                    'text': ' '.join(current_text),
+                                    'start': parse_srt_time(line.split('-->')[0].strip()),
+                                    'duration': parse_srt_time(line.split('-->')[1].strip()) - parse_srt_time(line.split('-->')[0].strip())
+                                })
+                                current_text = []
+                        elif line.strip() and not line.isdigit():
+                            current_text.append(line.strip())
+                else:
+                    raise HTTPException(status_code=404, detail="No subtitles or captions found for this video.")
             
+            # Format transcript into paragraphs
+            formatted_transcript = ""
+            current_paragraph = []
+            
+            for line in transcript_data:
+                if isinstance(line, dict):
+                    text = line.get('text', '')
+                else:
+                    text = line.text if hasattr(line, 'text') else str(line)
+                
+                if text:
+                    current_paragraph.append(text)
+                    # Start new paragraph if we hit a music marker or long pause
+                    if any("[음악]" in text for text in current_paragraph) or (len(current_paragraph) > 1 and isinstance(line, dict) and 'start' in line and isinstance(transcript_data[transcript_data.index(line)-1], dict) and 'start' in transcript_data[transcript_data.index(line)-1] and line['start'] - transcript_data[transcript_data.index(line)-1]['start'] > 2):
+                        formatted_transcript += " ".join(current_paragraph) + "\n\n"
+                        current_paragraph = []
+            
+            # Add any remaining text
+            if current_paragraph:
+                formatted_transcript += " ".join(current_paragraph)
+            
+            # Save both original and translated transcripts
+            ko_file, en_file = save_transcript(transcript_data, video_id)
+            
+            if ko_file and en_file:
+                with open(ko_file, "r", encoding="utf-8") as f:
+                    ko_content = f.read()
+                with open(en_file, "r", encoding="utf-8") as f:
+                    en_content = f.read()
+                
+                ko_paragraph = ko_content.split("="*50, 1)[-1].strip() if "="*50 in ko_content else ko_content
+                en_paragraph = en_content.split("="*50, 1)[-1].strip() if "="*50 in en_content else en_content
+                
+                return {
+                    "status": "success",
+                    "message": f"Fetched and saved new transcripts.",
+                    "korean_transcript": ko_paragraph,
+                    "english_transcript": en_paragraph
+                }
+                
         except Exception as e:
             error_msg = str(e)
             print(f"Error in read_transcript: {error_msg}")
@@ -857,3 +1016,13 @@ async def summarize_video_transcript(request: SummarizeRequest):
 @app.get("/")
 async def root():
     return {"message": "YouTube Translator API is running"}
+
+def get_captions(video_id: str):
+    """Get captions using pytube"""
+    try:
+        yt = YouTube(f"https://www.youtube.com/watch?v={video_id}")
+        caption = yt.captions.get_by_language_code('ko') or yt.captions.get_by_language_code('en')
+        return caption, caption.language_code if caption else None
+    except Exception as e:
+        print(f"Error getting captions: {str(e)}")
+        return None, None

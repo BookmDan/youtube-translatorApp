@@ -1,0 +1,27 @@
+.translation-item {
+  display: flex;
+  gap: 1rem;
+  padding: 0.5rem;
+  border-bottom: 1px solid #eee;
+}
+
+.timestamp {
+  color: #666;
+  font-size: 0.9rem;
+  min-width: 60px;
+  padding-top: 0.25rem;
+}
+
+.translation-content {
+  flex: 1;
+}
+
+.original-text {
+  color: #333;
+  margin-bottom: 0.25rem;
+}
+
+.translated-text {
+  color: #666;
+  font-style: italic;
+} 

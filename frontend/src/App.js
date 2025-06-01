@@ -125,9 +125,10 @@ function App() {
       const data = await response.json();
 
       if (response.ok) {
-        setKoreanTranscript(data.korean_transcript);
-        setEnglishTranscript(data.english_transcript);
-        setTranscript(data.korean_transcript); // Default to Korean
+        console.log("Transcript data:", data); // Debug log
+        setKoreanTranscript(data.korean_transcript || '');
+        setEnglishTranscript(data.english_transcript || '');
+        setTranscript(data.korean_transcript || ''); // Default to Korean
         setShowTranslation(false);
       } else {
         setError(data.detail || 'Failed to get transcript');
@@ -245,26 +246,26 @@ function App() {
               }}
             />
             <Box sx={{ mt: 2, display: 'flex', gap: 1, flexDirection: 'column' }}>
-              <Button
-                variant="contained"
-                color="primary"
-                type="submit"
-                fullWidth
-                size="large"
-                sx={{
-                  bgcolor: '#6c47ff',
-                  color: '#fff',
-                  fontWeight: 700,
-                  py: 1.5,
-                  borderRadius: 2,
-                  boxShadow: 2,
-                  '&:hover': { bgcolor: '#5936d9' }
-                }}
-                startIcon={<TranslateIcon />}
-                disabled={loading}
-              >
-                {loading ? 'Translating...' : 'Translate Video'}
-              </Button>
+            <Button
+              variant="contained"
+              color="primary"
+              type="submit"
+              fullWidth
+              size="large"
+              sx={{
+                bgcolor: '#6c47ff',
+                color: '#fff',
+                fontWeight: 700,
+                py: 1.5,
+                borderRadius: 2,
+                boxShadow: 2,
+                '&:hover': { bgcolor: '#5936d9' }
+              }}
+              startIcon={<TranslateIcon />}
+              disabled={loading}
+            >
+              {loading ? 'Translating...' : 'Translate Video'}
+            </Button>
               <Box sx={{ display: 'flex', gap: 1 }}>
                 <Button
                   variant="outlined"
