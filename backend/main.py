@@ -16,7 +16,7 @@ from pytube import YouTube
 from glob import glob
 from collections import Counter
 from database import init_db, MemoryCard, Transcript, Translation
-from backend.database.local_storage import save_all_phrases_to_json
+from database.local_storage import save_all_phrases_to_json
 
 app = FastAPI()
 
