@@ -71,9 +71,6 @@ Demo/
 *.jpeg
 *.gif
 
-# GCP
-gcp-key.json
-
 # Generated files
 backend/translations/
 backend/transcripts/
