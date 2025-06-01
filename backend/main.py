@@ -14,8 +14,14 @@ import torch
 import re
 from pytube import YouTube
 from glob import glob
+from collections import Counter
+from konlpy.tag import Okt
+from database import init_db, MemoryCard, Transcript, Translation
 
 app = FastAPI()
+
+# Initialize database
+init_db()
 
 # Hugging Face Inference API Configuration
 HF_API_BASE = "https://api-inference.huggingface.co/models"
@@ -354,6 +360,132 @@ def load_existing_translation(video_id: str, target_lang: str) -> dict:
         print(f"Error loading existing translation: {str(e)}")
         return None
 
+def extract_popular_phrases(text, min_length=2, top_n=20):
+    """Extract popular phrases from Korean text using KoNLPy."""
+    try:
+        print(f"Extracting phrases from text of length: {len(text)}")
+        
+        # Initialize JVM with proper parameters
+        from konlpy import jvm
+        jvm.init_jvm(max_heap_size=1024)  # Set max heap size to 1GB
+        
+        # Now initialize Okt
+        okt = Okt()
+        
+        # Ensure text is a string and not empty
+        if not isinstance(text, str):
+            print(f"Converting text to string from type: {type(text)}")
+            text = str(text)
+        
+        if not text.strip():
+            print("Empty text provided")
+            return []
+        
+        # Extract nouns and phrases
+        print("Extracting nouns...")
+        nouns = okt.nouns(text)
+        print(f"Found {len(nouns)} nouns")
+        
+        phrases = []
+        
+        # Create phrases of 2-3 words
+        for i in range(len(nouns) - 1):
+            if len(nouns[i]) >= min_length:
+                phrases.append(nouns[i])
+            if i < len(nouns) - 1:
+                phrase = nouns[i] + " " + nouns[i + 1]
+                if len(phrase) >= min_length:
+                    phrases.append(phrase)
+            if i < len(nouns) - 2:
+                phrase = nouns[i] + " " + nouns[i + 1] + " " + nouns[i + 2]
+                if len(phrase) >= min_length:
+                    phrases.append(phrase)
+        
+        print(f"Created {len(phrases)} phrases")
+        
+        # Count frequencies
+        phrase_counter = Counter(phrases)
+        
+        # Get top N phrases
+        top_phrases = phrase_counter.most_common(top_n)
+        print(f"Found {len(top_phrases)} top phrases")
+        
+        return top_phrases
+    except Exception as e:
+        print(f"Error in extract_popular_phrases: {str(e)}")
+        print("Full traceback:")
+        print(traceback.format_exc())
+        return []
+
+def create_memory_cards(transcript_data, video_id, video_title):
+    """Create memory cards from transcript data."""
+    try:
+        print("Starting memory card creation...")
+        
+        # Extract text from transcript data
+        print("Extracting text from transcript...")
+        if isinstance(transcript_data, list):
+            # Handle list of transcript entries
+            full_text = " ".join([entry['text'] for entry in transcript_data if isinstance(entry, dict) and 'text' in entry])
+        elif isinstance(transcript_data, str):
+            # Handle direct text input
+            full_text = transcript_data
+        else:
+            print(f"Unexpected transcript data type: {type(transcript_data)}")
+            return None
+            
+        print(f"Extracted text length: {len(full_text)}")
+        
+        if not full_text:
+            print("No text found in transcript data")
+            return None
+        
+        # Get popular phrases
+        print("Getting popular phrases...")
+        popular_phrases = extract_popular_phrases(full_text)
+        
+        if not popular_phrases:
+            print("No popular phrases found")
+            return None
+        
+        # Create memory cards
+        print("Creating memory cards...")
+        created_cards = []
+        for phrase, count in popular_phrases:
+            try:
+                print(f"Translating phrase: {phrase}")
+                # Translate phrase
+                translation = translator(phrase)[0]['translation_text']
+                
+                # Create memory card in database
+                card = MemoryCard.create(
+                    video_id=video_id,
+                    video_title=video_title,
+                    phrase=phrase,
+                    translation=translation,
+                    frequency=count
+                )
+                
+                if card:
+                    created_cards.append(card)
+                    print(f"Created card for: {phrase}")
+            except Exception as e:
+                print(f"Error creating memory card for phrase '{phrase}': {str(e)}")
+                continue
+        
+        if not created_cards:
+            print("No memory cards were created")
+            return None
+            
+        print(f"Successfully created {len(created_cards)} memory cards")
+        return created_cards
+        
+    except Exception as e:
+        print(f"Error in create_memory_cards: {str(e)}")
+        print("Full traceback:")
+        print(traceback.format_exc())
+        return None
+
 def save_transcript(transcript_data, video_id):
     try:
         print("Starting to save transcript...")
@@ -367,31 +499,28 @@ def save_transcript(transcript_data, video_id):
             video_title = f"video_{video_id}"
             print(f"Using fallback title: {video_title}")
 
-        # Create transcripts directory if it doesn't exist
-        transcripts_dir = os.path.join(os.path.dirname(__file__), "transcripts")
-        print(f"Creating transcripts directory at: {transcripts_dir}")
-        os.makedirs(transcripts_dir, exist_ok=True)
-
-        # Sanitize the title for use in filenames
-        sanitized_title = "".join(c for c in video_title if c.isalnum() or c in (' ', '-', '_')).rstrip()
-        print(f"Sanitized title: {sanitized_title}")
-
         # Format the transcript with proper line breaks
         formatted_text = ""
         current_paragraph = []
+        last_start_time = 0
         
         for entry in transcript_data:
             if isinstance(entry, dict) and 'text' in entry:
+                if "[음악]" in entry['text'] or \
+                   (entry.get('start', 0) - last_start_time > 3) or \
+                   len(current_paragraph) >= 3:
+                    if current_paragraph:
+                        formatted_text += " ".join(current_paragraph) + "\n\n"
+                        current_paragraph = []
+                
                 current_paragraph.append(entry['text'])
-                # Start new paragraph if we hit a music marker or long pause
-                if "[음악]" in entry['text'] or (len(current_paragraph) > 1 and entry.get('start', 0) - transcript_data[transcript_data.index(entry)-1].get('start', 0) > 2):
-                    formatted_text += " ".join(current_paragraph) + "\n\n"
-                    current_paragraph = []
+                last_start_time = entry.get('start', 0)
             elif isinstance(entry, str):
+                if "[음악]" in entry or len(current_paragraph) >= 3:
+                    if current_paragraph:
+                        formatted_text += " ".join(current_paragraph) + "\n\n"
+                        current_paragraph = []
                 current_paragraph.append(entry)
-                if "[음악]" in entry or len(current_paragraph) > 3:
-                    formatted_text += " ".join(current_paragraph) + "\n\n"
-                    current_paragraph = []
         
         # Add any remaining text
         if current_paragraph:
@@ -399,15 +528,15 @@ def save_transcript(transcript_data, video_id):
         
         print(f"Full transcript length: {len(formatted_text)}")
         
-        # Save Korean transcript
-        ko_file = os.path.join(transcripts_dir, f"{sanitized_title}_{video_id}_ko.txt")
-        print("Writing Korean transcript to file...")
-        with open(ko_file, "w", encoding="utf-8") as f:
-            f.write(f"Video Title: {video_title}\n")
-            f.write(f"Video ID: {video_id}\n")
-            f.write("="*50 + "\n")
-            f.write(formatted_text)
-        print("Korean transcript saved successfully")
+        # Save to database
+        transcript = Transcript.create(
+            video_id=video_id,
+            video_title=video_title,
+            korean_text=formatted_text
+        )
+        
+        if not transcript:
+            raise Exception("Failed to save transcript to database")
 
         # Translate and save English transcript
         print("Translating and saving English transcript...")
@@ -419,43 +548,57 @@ def save_transcript(transcript_data, video_id):
             paragraphs = formatted_text.split("\n\n")
             translated_paragraphs = []
             
-            for i, paragraph in enumerate(paragraphs):
-                if not paragraph.strip():
+            batch_size = 8
+            for i in range(0, len(paragraphs), batch_size):
+                batch = [p for p in paragraphs[i:i+batch_size] if p.strip()]
+                if not batch:
                     continue
-                print(f"Translating paragraph {i+1}/{len(paragraphs)}")
+                print(f"Translating paragraphs {i+1}-{i+len(batch)} of {len(paragraphs)}")
                 try:
-                    translation = translator(paragraph)[0]['translation_text']
-                    translated_paragraphs.append(translation)
+                    results = translator(batch)
+                    for result in results:
+                        translated_paragraphs.append(result['translation_text'])
                 except Exception as e:
-                    print(f"Error translating paragraph {i+1}: {str(e)}")
-                    translated_paragraphs.append(paragraph)  # Keep original if translation fails
+                    print(f"Error translating batch {i//batch_size+1}: {str(e)}")
+                    translated_paragraphs.extend(batch)
             
             english_text = "\n\n".join(translated_paragraphs)
             print("Translation completed successfully")
             
-            # Save English transcript
-            en_file = os.path.join(transcripts_dir, f"{sanitized_title}_{video_id}_en.txt")
-            print("Writing English transcript to file...")
-            with open(en_file, "w", encoding="utf-8") as f:
-                f.write(f"Video Title: {video_title}\n")
-                f.write(f"Video ID: {video_id}\n")
-                f.write("="*50 + "\n")
-                f.write(english_text)
-            print("English transcript saved successfully")
+            # Update transcript with English translation
+            Transcript.update_english_text(video_id, english_text)
             
-            return ko_file, en_file
+            # Create memory cards
+            print("Creating memory cards...")
+            popular_phrases = extract_popular_phrases(formatted_text)
+            
+            if popular_phrases:
+                for phrase, count in popular_phrases:
+                    try:
+                        translation = translator(phrase)[0]['translation_text']
+                        MemoryCard.create(
+                            video_id=video_id,
+                            video_title=video_title,
+                            phrase=phrase,
+                            translation=translation,
+                            frequency=count
+                        )
+                    except Exception as e:
+                        print(f"Error creating memory card for phrase '{phrase}': {str(e)}")
+                        continue
+
+            return transcript
         except Exception as e:
             print(f"Error during translation: {str(e)}")
             print("Full traceback:")
             print(traceback.format_exc())
-            # If translation fails, still return the Korean file
-            return ko_file, None
+            return transcript
 
     except Exception as e:
         print(f"Error in save_transcript: {str(e)}")
         print("Full traceback:")
         print(traceback.format_exc())
-        return None, None
+        return None
 
 @app.post("/translate")
 async def translate_video(video_request: VideoRequest):
@@ -742,42 +885,23 @@ async def read_transcript(video_request: VideoRequest):
         video_id = get_video_id(video_request.url)
         print(f"Reading transcript for video ID: {video_id}")
         
-        # First, check for existing transcript files
-        pattern = os.path.join("transcripts", f"*{video_id}*.txt")
-        files = sorted(glob(pattern), reverse=True)
+        # Try to get transcript from database
+        transcript = Transcript.get_by_video_id(video_id)
         
-        if files:
-            print(f"Found existing transcript files")
-            try:
-                # Get both Korean and English transcripts
-                ko_file = next((f for f in files if f.endswith("_ko.txt")), None)
-                en_file = next((f for f in files if f.endswith("_en.txt")), None)
-                
-                if ko_file and en_file:
-                    with open(ko_file, "r", encoding="utf-8") as f:
-                        ko_content = f.read()
-                    with open(en_file, "r", encoding="utf-8") as f:
-                        en_content = f.read()
-                    
-                    # Extract only the paragraphs (after the separator)
-                    ko_paragraph = ko_content.split("="*50, 1)[-1].strip() if "="*50 in ko_content else ko_content
-                    en_paragraph = en_content.split("="*50, 1)[-1].strip() if "="*50 in en_content else en_content
-                    
-                    return {
-                        "status": "success",
-                        "message": "Loaded saved transcripts.",
-                        "korean_transcript": ko_paragraph,
-                        "english_transcript": en_paragraph
-                    }
-            except Exception as e:
-                print(f"Error reading existing transcript files: {str(e)}")
+        if transcript:
+            print("Found transcript in database")
+            return {
+                "status": "success",
+                "message": "Loaded saved transcript.",
+                "korean_transcript": transcript["korean_text"],
+                "english_transcript": transcript["english_text"]
+            }
         
-        # If not found or reading failed, try to fetch and save transcript
+        # If not found in database, fetch and save new transcript
         print("Fetching new transcript...")
         try:
             transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
             
-            # Try Korean first, then English, then any other language
             try:
                 transcript_obj = transcript_list.find_transcript(['ko'])
                 language = "Korean"
@@ -796,23 +920,15 @@ async def read_transcript(video_request: VideoRequest):
                 transcript_data = transcript_obj.fetch()
                 print(f"Found {language} transcript with {len(transcript_data)} lines")
                 
-                # Save both original and translated transcripts
-                ko_file, en_file = save_transcript(transcript_data, video_id)
+                # Save transcript
+                transcript = save_transcript(transcript_data, video_id)
                 
-                if ko_file and en_file:
-                    with open(ko_file, "r", encoding="utf-8") as f:
-                        ko_content = f.read()
-                    with open(en_file, "r", encoding="utf-8") as f:
-                        en_content = f.read()
-                    
-                    ko_paragraph = ko_content.split("="*50, 1)[-1].strip() if "="*50 in ko_content else ko_content
-                    en_paragraph = en_content.split("="*50, 1)[-1].strip() if "="*50 in en_content else en_content
-                    
+                if transcript:
                     return {
                         "status": "success",
-                        "message": f"Fetched and saved new transcripts.",
-                        "korean_transcript": ko_paragraph,
-                        "english_transcript": en_paragraph
+                        "message": f"Fetched and saved new transcript.",
+                        "korean_transcript": transcript["korean_text"],
+                        "english_transcript": transcript["english_text"]
                     }
             except Exception as e:
                 error_msg = str(e)
@@ -829,22 +945,14 @@ async def read_transcript(video_request: VideoRequest):
                                 formatted_text += line.strip() + "\n"
                         
                         # Save the transcript
-                        ko_file, en_file = save_transcript([{"text": formatted_text}], video_id)
+                        transcript = save_transcript([{"text": formatted_text}], video_id)
                         
-                        if ko_file and en_file:
-                            with open(ko_file, "r", encoding="utf-8") as f:
-                                ko_content = f.read()
-                            with open(en_file, "r", encoding="utf-8") as f:
-                                en_content = f.read()
-                            
-                            ko_paragraph = ko_content.split("="*50, 1)[-1].strip() if "="*50 in ko_content else ko_content
-                            en_paragraph = en_content.split("="*50, 1)[-1].strip() if "="*50 in en_content else en_content
-                            
+                        if transcript:
                             return {
                                 "status": "success",
-                                "message": f"Fetched and saved new transcripts using alternative method.",
-                                "korean_transcript": ko_paragraph,
-                                "english_transcript": en_paragraph
+                                "message": f"Fetched and saved new transcript using alternative method.",
+                                "korean_transcript": transcript["korean_text"],
+                                "english_transcript": transcript["english_text"]
                             }
                 
                 raise HTTPException(status_code=404, detail=f"No subtitles or captions found for this video. {error_msg}")
@@ -891,3 +999,16 @@ async def summarize_video_transcript(request: SummarizeRequest):
 @app.get("/")
 async def root():
     return {"message": "YouTube Translator API is running"}
+
+@app.get("/memory-cards/{video_id}")
+async def get_memory_cards(video_id: str):
+    try:
+        # Get memory cards from database
+        cards = MemoryCard.get_by_video_id(video_id)
+        if cards:
+            return {"status": "success", "cards": cards}
+        else:
+            return {"status": "error", "message": "Memory cards not found"}
+            
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
