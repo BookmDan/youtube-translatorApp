@@ -79,3 +79,4 @@ terraform.tfvars
 
 # GCP
 gcp-key.json
+.env

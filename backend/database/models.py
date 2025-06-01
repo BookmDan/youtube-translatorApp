@@ -44,6 +44,18 @@ class Transcript:
         return result.data[0] if result.data else None
 
     @staticmethod
+    def update(video_id: str, video_title: str, korean_text: str, english_text: Optional[str] = None) -> Dict:
+        """Update an existing transcript"""
+        data = {
+            "video_title": video_title,
+            "korean_text": korean_text
+        }
+        if english_text is not None:
+            data["english_text"] = english_text
+        result = supabase.table("transcripts").update(data).eq("video_id", video_id).execute()
+        return result.data[0] if result.data else None
+
+    @staticmethod
     def update_english_text(video_id: str, english_text: str) -> Dict:
         """Update English translation of a transcript"""
         data = {"english_text": english_text}

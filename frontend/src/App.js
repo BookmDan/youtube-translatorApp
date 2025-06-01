@@ -27,7 +27,9 @@ import GitHubIcon from '@mui/icons-material/GitHub';
 import SummarizeIcon from '@mui/icons-material/Summarize';
 import axios from 'axios';
 
-const TRANSLATION_API_URL = (process.env.REACT_APP_API_URL || 'http://localhost:8000') + '/translate'; // Update if needed
+const TRANSLATION_API_URL = (process.env.REACT_APP_API_URL || 'http://localhost:8080') + '/translate';
+const TRANSCRIPT_API_URL = (process.env.REACT_APP_API_URL || 'http://localhost:8080') + '/read-transcript';
+const SUMMARIZE_API_URL = (process.env.REACT_APP_API_URL || 'http://localhost:8080') + '/summarize-transcript';
 
 const LANGUAGES = [
   { code: 'eng_Latn', label: 'English' },
@@ -49,6 +51,10 @@ function App() {
   const [summary, setSummary] = useState(null);
   const [lastTranslatedUrl, setLastTranslatedUrl] = useState('');
   const [lastTranscriptUrl, setLastTranscriptUrl] = useState('');
+  const [showTranslation, setShowTranslation] = useState(false);
+  const [koreanTranscript, setKoreanTranscript] = useState('');
+  const [englishTranscript, setEnglishTranscript] = useState('');
+  const [showEnglish, setShowEnglish] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -93,33 +99,42 @@ function App() {
   };
 
   const handleGetTranscript = async () => {
-    setError("");
-    
-    // Clear transcript if we're getting transcript for a different video
-    if (url !== lastTranscriptUrl) {
-      setTranscript(null);
-    }
-    
+    setLoading(true);
+    setError('');
+    setTranscript('');
+    setKoreanTranscript('');
+    setEnglishTranscript('');
+    setShowTranslation(false);
+    setShowEnglish(false);
+
     if (!url) {
-      setError("Please enter a YouTube URL.");
+      setError('Please enter a YouTube URL.');
+      setLoading(false);
       return;
     }
-    setLoading(true);
+
     try {
-      const response = await fetch("http://localhost:8000/read-transcript", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+      const response = await fetch(TRANSCRIPT_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify({ url }),
       });
+
       const data = await response.json();
-      if (response.ok && data.status === "success") {
-        setTranscript(data.transcript);
-        setLastTranscriptUrl(url); // Track which URL's transcript is loaded
+
+      if (response.ok) {
+        setKoreanTranscript(data.korean_transcript);
+        setEnglishTranscript(data.english_transcript);
+        setTranscript(data.korean_transcript); // Default to Korean
+        setShowTranslation(false);
       } else {
-        setError(data.detail || data.message || "Failed to load transcript.");
+        setError(data.detail || 'Failed to get transcript');
       }
     } catch (err) {
-      setError("Failed to load transcript.");
+      console.error('Transcript error:', err);
+      setError('Error connecting to server. Please make sure the backend server is running.');
     } finally {
       setLoading(false);
     }
@@ -135,7 +150,7 @@ function App() {
     setLoading(true);
     
     try {
-      const response = await fetch("http://localhost:8000/summarize-transcript", {
+      const response = await fetch(SUMMARIZE_API_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
@@ -154,6 +169,11 @@ function App() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const toggleLanguage = () => {
+    setShowEnglish(!showEnglish);
+    setTranscript(showEnglish ? koreanTranscript : englishTranscript);
   };
 
   const selectedLangLabel = LANGUAGES.find(l => l.code === targetLang)?.label || 'English';
@@ -332,9 +352,25 @@ function App() {
                   <Typography variant="h6" gutterBottom sx={{ color: '#424242', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 1 }}>
                     📝 Full Transcript
                   </Typography>
-                  <Box sx={{ maxHeight: '500px', overflow: 'auto', fontSize: '0.9rem', lineHeight: 1.6 }}>
-                    <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", margin: 0, fontFamily: 'inherit' }}>{transcript}</pre>
-                  </Box>
+                  <div className="transcript-section">
+                    <div className="transcript-controls">
+                      <button 
+                        onClick={() => setShowEnglish(false)} 
+                        className={!showEnglish ? 'active' : ''}
+                      >
+                        Korean Transcript
+                      </button>
+                      <button 
+                        onClick={() => setShowEnglish(true)} 
+                        className={showEnglish ? 'active' : ''}
+                      >
+                        English Transcript
+                      </button>
+                    </div>
+                    <div className="transcript-content">
+                      {showEnglish ? englishTranscript : koreanTranscript}
+                    </div>
+                  </div>
                 </Paper>
               </Box>
             </Box>
@@ -422,9 +458,27 @@ function App() {
             <Box sx={{ mt: 3 }}>
               <Paper elevation={2} sx={{ p: 3, borderRadius: 2, bgcolor: '#f7f7f7' }}>
                 <Typography variant="h6" gutterBottom sx={{ color: '#424242', fontWeight: 700 }}>
-                  📝 Transcript
+                  📝 Full Transcript
                 </Typography>
-                <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: '0.95rem', lineHeight: 1.6 }}>{transcript}</pre>
+                <div className="transcript-section">
+                  <div className="transcript-controls">
+                    <button 
+                      onClick={() => setShowEnglish(false)} 
+                      className={!showEnglish ? 'active' : ''}
+                    >
+                      Korean Transcript
+                    </button>
+                    <button 
+                      onClick={() => setShowEnglish(true)} 
+                      className={showEnglish ? 'active' : ''}
+                    >
+                      English Transcript
+                    </button>
+                  </div>
+                  <div className="transcript-content">
+                    {showEnglish ? englishTranscript : koreanTranscript}
+                  </div>
+                </div>
               </Paper>
             </Box>
           )}

@@ -1,0 +1,62 @@
+{
+  "id": "20250531_231734",
+  "video_id": "test123",
+  "video_title": "Korean Learning",
+  "phrases": [
+    {
+      "phrase": "한국",
+      "translation": "",
+      "frequency": 11
+    },
+    {
+      "phrase": "한국어",
+      "translation": "Korean language",
+      "frequency": 3
+    },
+    {
+      "phrase": "배우고",
+      "translation": "learning",
+      "frequency": 2
+    },
+    {
+      "phrase": "안녕하세요",
+      "translation": "Hello",
+      "frequency": 1
+    },
+    {
+      "phrase": "재미있어요",
+      "translation": "interesting",
+      "frequency": 1
+    },
+    {
+      "phrase": "공부하고",
+      "translation": "studying",
+      "frequency": 1
+    },
+    {
+      "phrase": "드라마",
+      "translation": "drama",
+      "frequency": 1
+    },
+    {
+      "phrase": "음식",
+      "translation": "food",
+      "frequency": 1
+    },
+    {
+      "phrase": "김치찌개",
+      "translation": "kimchi stew",
+      "frequency": 1
+    },
+    {
+      "phrase": "비빔밥",
+      "translation": "bibimbap",
+      "frequency": 1
+    },
+    {
+      "phrase": "문화",
+      "translation": "culture",
+      "frequency": 1
+    }
+  ]
+}
