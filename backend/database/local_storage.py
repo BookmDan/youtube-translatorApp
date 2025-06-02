@@ -8,6 +8,8 @@ from soynlp.tokenizer import RegexTokenizer, LTokenizer
 from soynlp.normalizer import *
 from transformers import MarianMTModel, MarianTokenizer
 import glob
+from hangul_romanize import Transliter
+from hangul_romanize.rule import academic
 
 # Create memory cards directory if it doesn't exist
 MEMORY_CARDS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "memoryCards")
@@ -183,6 +185,9 @@ def save_all_phrases_to_json(video_id: str, video_title: str, transcript_text: s
         # Initialize translator
         model, tokenizer = get_translator()
         
+        # Initialize romanizer
+        transliter = Transliter(academic)
+        
         # Create a unique filename using video_id and timestamp
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"memory_cards_{video_id}_{timestamp}.json"
@@ -196,7 +201,7 @@ def save_all_phrases_to_json(video_id: str, video_title: str, transcript_text: s
             "phrases": []
         }
         
-        # Add all phrases with translations
+        # Add all phrases with translations and phonetics
         for phrase_data in frequent_phrases:
             phrase = phrase_data["phrase"]
             # Get translation from provided translations or use the translator
@@ -205,9 +210,11 @@ def save_all_phrases_to_json(video_id: str, video_title: str, transcript_text: s
                 translation = translations[phrase]
             else:
                 translation = translate_text(phrase, model, tokenizer)
-            
+            # Add phonetic (romanized)
+            phonetic = transliter.translit(phrase)
             data["phrases"].append({
                 "phrase": phrase,
+                "phonetic": phonetic,
                 "translation": translation,
                 "frequency": phrase_data["frequency"]
             })

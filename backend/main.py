@@ -1,3 +1,6 @@
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -16,7 +19,9 @@ from pytube import YouTube
 from glob import glob
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-from database.local_storage import save_frequent_phrases_from_transcript, get_memory_cards_by_video_id, memory_card_exists_for_video, save_all_phrases_to_json, get_latest_memory_cards_file
+from .database.local_storage import save_frequent_phrases_from_transcript, get_memory_cards_by_video_id, memory_card_exists_for_video, save_all_phrases_to_json, get_latest_memory_cards_file
+from hangul_romanize import Transliter
+from hangul_romanize.rule import academic
 
 app = FastAPI()
 
@@ -447,8 +452,8 @@ def save_transcript(transcript_data, video_id):
             for i, chunk in enumerate(chunks):
                 print(f"Translating chunk {i+1}/{len(chunks)}")
                 try:
-                    translation = translator(chunk)[0]['translation_text']
-                    translated_chunks.append(translation)
+                    translated = translator(chunk)[0]['translation_text']
+                    translated_chunks.append(translated)
                 except Exception as e:
                     print(f"Error translating chunk {i+1}: {str(e)}")
                     translated_chunks.append(chunk)  # Keep original if translation fails
@@ -469,27 +474,21 @@ def save_transcript(transcript_data, video_id):
             # Also save the translation data for the translate endpoint
             translations = []
             for i, line in enumerate(transcript_data):
+                text = line.get('text', '') if isinstance(line, dict) else getattr(line, 'text', '')
+                start = line.get('start', 0) if isinstance(line, dict) else getattr(line, 'start', 0)
+                duration = line.get('duration', 0) if isinstance(line, dict) else getattr(line, 'duration', 0)
                 try:
-                    text = line['text'] if isinstance(line, dict) else line.text
-                    start = line['start'] if isinstance(line, dict) else line.start
-                    duration = line['duration'] if isinstance(line, dict) else line.duration
-                    
-                    # Find the corresponding translation in the chunks
-                    chunk_index = i // 500
-                    if chunk_index < len(translated_chunks):
-                        translated = translated_chunks[chunk_index]
-                    else:
-                        translated = text
-                    
-                    translations.append({
-                        "original": text,
-                        "translated": translated,
-                        "start": start,
-                        "duration": duration
-                    })
+                    translated = translator(text)[0]['translation_text']
+                    print(f"[Translation] Line {i+1}/{len(transcript_data)}: {text} -> {translated}")
                 except Exception as e:
-                    print(f"Error processing line {i}: {str(e)}")
-                    continue
+                    translated = text  # fallback
+                    print(f"[Translation] Line {i+1}/{len(transcript_data)}: {text} -> [FAILED] {str(e)}")
+                translations.append({
+                    "original": text,
+                    "translated": translated,
+                    "start": start,
+                    "duration": duration
+                })
             
             # Save the translation data
             save_translation(translations, video_id, "Korean", "eng_Latn")
@@ -521,9 +520,14 @@ async def process_remaining_translations(transcript_data, video_id, source_langu
         for line in transcript_data[start_index:]:
             try:
                 # Access transcript data correctly
-                text = line['text'] if isinstance(line, dict) else line.text
-                start = line['start'] if isinstance(line, dict) else line.start
-                duration = line['duration'] if isinstance(line, dict) else line.duration
+                if isinstance(line, dict):
+                    text = line.get('text', '')
+                    start = line.get('start', 0)
+                    duration = line.get('duration', 0)
+                else:
+                    text = getattr(line, 'text', '')
+                    start = getattr(line, 'start', 0)
+                    duration = getattr(line, 'duration', 0)
                 
                 # Translate the text
                 translated = translator(text)[0]['translation_text']
@@ -683,32 +687,25 @@ async def translate_video(video_request: VideoRequest):
             current_paragraph = []
             
             for line in transcript_data[:20]:
-                try:
-                    # Access transcript data correctly
-                    text = line['text'] if isinstance(line, dict) else line.text
-                    start = line['start'] if isinstance(line, dict) else line.start
-                    duration = line['duration'] if isinstance(line, dict) else line.duration
-                    
-                    # Translate the text
-                    translated = translator(text)[0]['translation_text']
-                    
-                    # Add to translations list
-                    translations.append({
-                        "original": text,
-                        "translated": translated,
-                        "start": start,
-                        "duration": duration
-                    })
-                    
-                    # Build formatted transcript
-                    current_paragraph.append(translated)
-                    if any("[음악]" in text for text in current_paragraph) or (len(current_paragraph) > 1 and isinstance(line, dict) and 'start' in line and isinstance(transcript_data[transcript_data.index(line)-1], dict) and 'start' in transcript_data[transcript_data.index(line)-1] and line['start'] - transcript_data[transcript_data.index(line)-1]['start'] > 2):
-                        formatted_transcript += " ".join(current_paragraph) + "\n\n"
-                        current_paragraph = []
-                        
-                except Exception as e:
-                    print(f"Error translating line: {str(e)}")
-                    continue
+                if isinstance(line, dict):
+                    text = line.get('text', '')
+                    start = line.get('start', 0)
+                    duration = line.get('duration', 0)
+                else:
+                    text = getattr(line, 'text', '')
+                    start = getattr(line, 'start', 0)
+                    duration = getattr(line, 'duration', 0)
+                translated = translator(text)[0]['translation_text']
+                translations.append({
+                    "original": text,
+                    "translated": translated,
+                    "start": start,
+                    "duration": duration
+                })
+                current_paragraph.append(translated)
+                if any("[음악]" in text for text in current_paragraph) or (len(current_paragraph) > 1 and isinstance(line, dict) and 'start' in line and isinstance(transcript_data[transcript_data.index(line)-1], dict) and 'start' in transcript_data[transcript_data.index(line)-1] and line['start'] - transcript_data[transcript_data.index(line)-1]['start'] > 2):
+                    formatted_transcript += " ".join(current_paragraph) + "\n\n"
+                    current_paragraph = []
 
             # Add any remaining text
             if current_paragraph:

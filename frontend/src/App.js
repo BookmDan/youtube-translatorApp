@@ -386,10 +386,10 @@ function App() {
                               primary={
                                 <>
                                   <Box mb={0.5} sx={{ fontSize: '0.9rem' }}>
-                                    <strong>{result.source_language || 'Original'}:</strong> <span>{line.original}</span>
+                                    <strong>Korean:</strong> <span>{line.original}</span>
                                   </Box>
                                   <Box sx={{ fontSize: '0.9rem', color: '#1565c0' }}>
-                                    <strong>{selectedLangLabel}:</strong> <span>{line.translation}</span>
+                                    <strong>English:</strong> <span>{line.translated || line.translation}</span>
                                   </Box>
                                 </>
                               }
@@ -490,10 +490,10 @@ function App() {
                             primary={
                               <>
                                 <Box mb={0.5}>
-                                  <strong>{result.source_language || 'Original'}:</strong> <span>{line.original}</span>
+                                  <strong>Korean:</strong> <span>{line.original}</span>
                                 </Box>
                                 <Box>
-                                  <strong>{selectedLangLabel}:</strong> <span>{line.translation}</span>
+                                  <strong>English:</strong> <span>{line.translated || line.translation}</span>
                                 </Box>
                               </>
                             }

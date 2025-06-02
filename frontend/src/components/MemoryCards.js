@@ -58,6 +58,7 @@ const MemoryCards = ({ videoId, onClose }) => {
                         <div className="card-inner-full">
                             <div className="card-front-full">
                                 <h3>{card.phrase}</h3>
+                                {card.phonetic && <div className="phonetic">{card.phonetic}</div>}
                                 <p>Frequency: {card.frequency}</p>
                             </div>
                             <div className="card-back-full">

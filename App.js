@@ -78,7 +78,7 @@ function App() {
                 {result.result && (
                   <>
                     <strong>Korean:</strong> {result.result.original}<br/>
-                    <strong>English:</strong> {result.result.translation}
+                    <strong>English:</strong> <span>{result.result.translated || result.result.translation}</span>
                   </>
                 )}
               </Typography>
